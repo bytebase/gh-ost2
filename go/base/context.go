@@ -306,12 +306,12 @@ func (this *MigrationContext) SetConnectionConfig(storageEngine string) error {
 }
 
 func getSafeTableName(baseName string, suffix string) string {
-	name := fmt.Sprintf("_%s_%s", baseName, suffix)
+	name := fmt.Sprintf("~%s_%s", baseName, suffix)
 	if len(name) <= mysql.MaxTableNameLength {
 		return name
 	}
 	extraCharacters := len(name) - mysql.MaxTableNameLength
-	return fmt.Sprintf("_%s_%s", baseName[0:len(baseName)-extraCharacters], suffix)
+	return fmt.Sprintf("~%s_%s", baseName[0:len(baseName)-extraCharacters], suffix)
 }
 
 // GetGhostTableName generates the name of ghost table, based on original table name
