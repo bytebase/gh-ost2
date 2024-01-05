@@ -166,7 +166,7 @@ test_single() {
     --assume-rbr \
     --initially-drop-old-table \
     --initially-drop-ghost-table \
-    --throttle-query='select timestampdiff(second, min(last_update), now()) < 5 from _gh_ost_test_ghc' \
+    --throttle-query='select timestampdiff(second, min(last_update), now()) < 5 from `~gh_ost_test_ghc`' \
     --throttle-flag-file=$throttle_flag_file \
     --serve-socket-file=/tmp/gh-ost.test.sock \
     --initially-drop-socket-file \
@@ -220,7 +220,7 @@ test_single() {
     return 1
   fi
 
-  gh-ost-test-mysql-replica --default-character-set=utf8mb4 test -e "show create table _gh_ost_test_gho\G" -ss > $ghost_structure_output_file
+  gh-ost-test-mysql-replica --default-character-set=utf8mb4 test -e "show create table \`~gh_ost_test_gho\`\G" -ss > $ghost_structure_output_file
 
   if [ -f $tests_path/$test_name/expect_table_structure ] ; then
     expected_table_structure="$(cat $tests_path/$test_name/expect_table_structure)"
@@ -234,13 +234,13 @@ test_single() {
 
   echo_dot
   gh-ost-test-mysql-replica --default-character-set=utf8mb4 test -e "select ${orig_columns} from gh_ost_test ${order_by}" -ss > $orig_content_output_file
-  gh-ost-test-mysql-replica --default-character-set=utf8mb4 test -e "select ${ghost_columns} from _gh_ost_test_gho ${order_by}" -ss > $ghost_content_output_file
+  gh-ost-test-mysql-replica --default-character-set=utf8mb4 test -e "select ${ghost_columns} from \`~gh_ost_test_gho\` ${order_by}" -ss > $ghost_content_output_file
   orig_checksum=$(cat $orig_content_output_file | md5sum)
   ghost_checksum=$(cat $ghost_content_output_file | md5sum)
 
   if [ "$orig_checksum" != "$ghost_checksum" ] ; then
     gh-ost-test-mysql-replica --default-character-set=utf8mb4 test -e "select ${orig_columns} from gh_ost_test" -ss > $orig_content_output_file
-    gh-ost-test-mysql-replica --default-character-set=utf8mb4 test -e "select ${ghost_columns} from _gh_ost_test_gho" -ss > $ghost_content_output_file
+    gh-ost-test-mysql-replica --default-character-set=utf8mb4 test -e "select ${ghost_columns} from \`~gh_ost_test_gho\`" -ss > $ghost_content_output_file
     echo "ERROR $test_name: checksum mismatch"
     echo "---"
     diff $orig_content_output_file $ghost_content_output_file
