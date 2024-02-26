@@ -1411,6 +1411,7 @@ func (this *Migrator) initiateStreaming() error {
 		if err != nil {
 			// Use helper to prevent deadlock if listenOnPanicAbort already exited
 			_ = base.SendWithContext(this.migrationContext.GetContext(), this.migrationContext.PanicAbort, err)
+			return
 		}
 		this.migrationContext.Log.Debugf("Done streaming")
 	}()
