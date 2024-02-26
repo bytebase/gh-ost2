@@ -182,6 +182,7 @@ func (this *Migrator) retryOperationWithExponentialBackoff(operation func() erro
 func (this *Migrator) consumeRowCopyComplete() {
 	if err := <-this.rowCopyComplete; err != nil {
 		this.migrationContext.PanicAbort <- err
+		return
 	}
 	atomic.StoreInt64(&this.rowCopyCompleteFlag, 1)
 	this.migrationContext.MarkRowCopyEndTime()
@@ -189,6 +190,7 @@ func (this *Migrator) consumeRowCopyComplete() {
 		for err := range this.rowCopyComplete {
 			if err != nil {
 				this.migrationContext.PanicAbort <- err
+				return
 			}
 		}
 	}()
@@ -255,6 +257,7 @@ func (this *Migrator) onChangelogHeartbeatEvent(dmlEvent *binlog.BinlogDMLEvent)
 // listenOnPanicAbort aborts on abort request
 func (this *Migrator) listenOnPanicAbort() {
 	err := <-this.migrationContext.PanicAbort
+	this.teardown()
 	this.migrationContext.Log.Fatale(err)
 }
 
@@ -1070,6 +1073,7 @@ func (this *Migrator) initiateStreaming() error {
 		err := this.eventsStreamer.StreamEvents(this.canStopStreaming)
 		if err != nil {
 			this.migrationContext.PanicAbort <- err
+			return
 		}
 		this.migrationContext.Log.Debugf("Done streaming")
 	}()
