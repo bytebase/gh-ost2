@@ -127,7 +127,7 @@ func (this *ConnectionConfig) GetDBUri(databaseName string) string {
 		"charset=utf8mb4,utf8,latin1",
 		"interpolateParams=true",
 		fmt.Sprintf("tls=%s", tlsOption),
-		fmt.Sprintf("transaction_isolation=%q", this.TransactionIsolation),
+		// fmt.Sprintf("transaction_isolation=%q", this.TransactionIsolation),
 		fmt.Sprintf("timeout=%fs", this.Timeout),
 		fmt.Sprintf("readTimeout=%fs", this.Timeout),
 		fmt.Sprintf("writeTimeout=%fs", this.Timeout),
