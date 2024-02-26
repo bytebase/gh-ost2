@@ -361,6 +361,7 @@ func (this *Throttler) collectGeneralThrottleMetrics() error {
 	if this.migrationContext.PanicFlagFile != "" {
 		if base.FileExists(this.migrationContext.PanicFlagFile) {
 			this.migrationContext.PanicAbort <- fmt.Errorf("Found panic-file %s. Aborting without cleanup", this.migrationContext.PanicFlagFile)
+			return nil
 		}
 	}
 
@@ -384,6 +385,7 @@ func (this *Throttler) collectGeneralThrottleMetrics() error {
 
 	if criticalLoadMet && this.migrationContext.CriticalLoadIntervalMilliseconds == 0 {
 		this.migrationContext.PanicAbort <- fmt.Errorf("critical-load met: %s=%d, >=%d", variableName, value, threshold)
+		return nil
 	}
 	if criticalLoadMet && this.migrationContext.CriticalLoadIntervalMilliseconds > 0 {
 		this.migrationContext.Log.Errorf("critical-load met once: %s=%d, >=%d. Will check again in %d millis", variableName, value, threshold, this.migrationContext.CriticalLoadIntervalMilliseconds)
