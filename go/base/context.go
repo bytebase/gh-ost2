@@ -865,7 +865,7 @@ func (this *MigrationContext) ApplyCredentials() {
 
 func (this *MigrationContext) SetupTLS() error {
 	if this.UseTLS {
-		return this.InspectorConnectionConfig.UseTLS(this.TLSCACertificate, this.TLSCertificate, this.TLSKey, this.TLSAllowInsecure)
+		return this.InspectorConnectionConfig.UseTLS(this.Uuid, this.TLSCACertificate, this.TLSCertificate, this.TLSKey, this.TLSAllowInsecure)
 	}
 	return nil
 }
