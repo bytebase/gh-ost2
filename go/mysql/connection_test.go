@@ -90,7 +90,7 @@ func TestGetDBUri(t *testing.T) {
 	c.Charset = "utf8mb4,utf8,latin1"
 
 	uri := c.GetDBUri("test")
-	require.Equal(t, `gromit:penguin@tcp(myhost:3306)/test?autocommit=true&interpolateParams=true&charset=utf8mb4,utf8,latin1&tls=false&transaction_isolation="REPEATABLE-READ"&timeout=1.234500s&readTimeout=1.234500s&writeTimeout=1.234500s`, uri)
+	require.Equal(t, `gromit:penguin@tcp(myhost:3306)/test?autocommit=true&interpolateParams=true&charset=utf8mb4,utf8,latin1&tls=false&timeout=1.234500s&readTimeout=1.234500s&writeTimeout=1.234500s`, uri)
 }
 
 func TestGetDBUriWithTLSSetup(t *testing.T) {
@@ -104,12 +104,16 @@ func TestGetDBUriWithTLSSetup(t *testing.T) {
 	}
 	c.TransactionIsolation = transactionIsolation
 	c.Charset = "utf8mb4_general_ci,utf8_general_ci,latin1"
+	c.TLSKey = "uuidv4"
 
 	uri := c.GetDBUri("test")
-	require.Equal(t, `gromit:penguin@tcp(myhost:3306)/test?autocommit=true&interpolateParams=true&charset=utf8mb4_general_ci,utf8_general_ci,latin1&tls=ghost-myhost&transaction_isolation="REPEATABLE-READ"&timeout=1.234500s&readTimeout=1.234500s&writeTimeout=1.234500s`, uri)
+	require.Equal(t, `gromit:penguin@tcp(myhost:3306)/test?autocommit=true&interpolateParams=true&charset=utf8mb4_general_ci,utf8_general_ci,latin1&tls=uuidv4-myhost&timeout=1.234500s&readTimeout=1.234500s&writeTimeout=1.234500s`, uri)
 }
 
 func TestGetDBTLSConfigKey(t *testing.T) {
-	configKey := GetDBTLSConfigKey("myhost")
+	configKey := GetDBTLSConfigKey("", "myhost")
 	require.Equal(t, "ghost-myhost", configKey)
+
+	configKey = GetDBTLSConfigKey("uuidv4", "myhost")
+	require.Equal(t, "uuidv4-myhost", configKey)
 }

@@ -31,6 +31,9 @@ type ConnectionConfig struct {
 	Timeout              float64
 	TransactionIsolation string
 	Charset              string
+
+	// use migrationContext.Uuid if useSSL
+	TLSKey string
 }
 
 func NewConnectionConfig() *ConnectionConfig {
@@ -51,6 +54,7 @@ func (this *ConnectionConfig) DuplicateCredentials(key InstanceKey) *ConnectionC
 		Timeout:              this.Timeout,
 		TransactionIsolation: this.TransactionIsolation,
 		Charset:              this.Charset,
+		TLSKey:               this.TLSKey,
 	}
 
 	if this.tlsConfig != nil {
@@ -78,7 +82,7 @@ func (this *ConnectionConfig) Equals(other *ConnectionConfig) bool {
 	return this.Key.Equals(&other.Key) || this.ImpliedKey.Equals(other.ImpliedKey)
 }
 
-func (this *ConnectionConfig) UseTLS(caCertificatePath, clientCertificate, clientKey string, allowInsecure bool) error {
+func (this *ConnectionConfig) UseTLS(tlsKey string, caCertificatePath, clientCertificate, clientKey string, allowInsecure bool) error {
 	var rootCertPool *x509.CertPool
 	var certs []tls.Certificate
 	var err error
@@ -112,6 +116,7 @@ func (this *ConnectionConfig) UseTLS(caCertificatePath, clientCertificate, clien
 		RootCAs:            rootCertPool,
 		InsecureSkipVerify: allowInsecure,
 	}
+	this.TLSKey = tlsKey
 
 	return this.RegisterTLSConfig()
 }
@@ -124,7 +129,7 @@ func (this *ConnectionConfig) RegisterTLSConfig() error {
 		return errors.New("tlsConfig.ServerName cannot be empty")
 	}
 
-	var tlsOption = GetDBTLSConfigKey(this.tlsConfig.ServerName)
+	tlsOption := GetDBTLSConfigKey(this.TLSKey, this.tlsConfig.ServerName)
 
 	return mysql.RegisterTLSConfig(tlsOption, this.tlsConfig)
 }
@@ -145,7 +150,7 @@ func (this *ConnectionConfig) GetDBUri(databaseName string) string {
 	// simplify construction of the DSN below.
 	tlsOption := "false"
 	if this.tlsConfig != nil {
-		tlsOption = GetDBTLSConfigKey(this.tlsConfig.ServerName)
+		tlsOption = GetDBTLSConfigKey(this.TLSKey, this.tlsConfig.ServerName)
 	}
 
 	if this.Charset == "" {
@@ -166,6 +171,9 @@ func (this *ConnectionConfig) GetDBUri(databaseName string) string {
 	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?%s", this.User, this.Password, hostname, this.Key.Port, databaseName, strings.Join(connectionParams, "&"))
 }
 
-func GetDBTLSConfigKey(tlsServerName string) string {
-	return fmt.Sprintf("%s-%s", TLS_CONFIG_KEY, tlsServerName)
+func GetDBTLSConfigKey(tlsKey string, tlsServerName string) string {
+	if tlsKey == "" {
+		tlsKey = TLS_CONFIG_KEY
+	}
+	return fmt.Sprintf("%s-%s", tlsKey, tlsServerName)
 }
