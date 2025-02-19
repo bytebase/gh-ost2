@@ -79,6 +79,7 @@ func NewThrottleCheckResult(throttle bool, reason string, reasonHint ThrottleRea
 type MigrationContext struct {
 	Uuid string
 
+	GhostDatabaseName     string
 	DatabaseName          string
 	OriginalTableName     string
 	AlterStatement        string
@@ -361,6 +362,14 @@ func getSafeTableName(baseName string, suffix string) string {
 	}
 	extraCharacters := len(name) - mysql.MaxTableNameLength
 	return fmt.Sprintf("~%s_%s", baseName[0:len(baseName)-extraCharacters], suffix)
+}
+
+// GetGhostDatabaseName returns the database name used for ghost/changelog tables.
+func (this *MigrationContext) GetGhostDatabaseName() string {
+	if this.GhostDatabaseName != "" {
+		return this.GhostDatabaseName
+	}
+	return this.DatabaseName
 }
 
 // GetGhostTableName generates the name of ghost table, based on original table name

@@ -327,6 +327,9 @@ func (suite *MigratorTestSuite) SetupTest() {
 	suite.Require().NoError(err)
 
 	os.Remove("/tmp/gh-ost.sock")
+
+	_, err = suite.db.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS bbdataarchive")
+	suite.Require().NoError(err)
 }
 
 func (suite *MigratorTestSuite) TearDownTest() {
@@ -339,6 +342,9 @@ func (suite *MigratorTestSuite) TearDownTest() {
 	_, err = suite.db.ExecContext(ctx, "DROP TABLE IF EXISTS "+getTestRevertedTableName())
 	suite.Require().NoError(err)
 	_, err = suite.db.ExecContext(ctx, "DROP TABLE IF EXISTS "+getTestOldTableName())
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, "DROP DATABASE IF EXISTS bbdataarchive")
 	suite.Require().NoError(err)
 }
 
@@ -354,6 +360,10 @@ func (suite *MigratorTestSuite) TestMigrateEmpty() {
 	migrationContext := newTestMigrationContext()
 	migrationContext.ApplierConnectionConfig = connectionConfig
 	migrationContext.InspectorConnectionConfig = connectionConfig
+	migrationContext.DatabaseName = "test"
+	migrationContext.GhostDatabaseName = "bbdataarchive"
+	migrationContext.SkipPortValidation = true
+	migrationContext.OriginalTableName = "testing"
 	migrationContext.SetConnectionConfig("innodb")
 	migrationContext.InitiallyDropOldTable = true
 
@@ -375,15 +385,15 @@ func (suite *MigratorTestSuite) TestMigrateEmpty() {
 
 	// Verify the changelog table was claned up
 	//nolint:execinquery
-	err = suite.db.QueryRow("SHOW TABLES IN test LIKE '_testing_ghc'").Scan(&tableName)
+	err = suite.db.QueryRow("SHOW TABLES IN bbdataarchive LIKE '~testing_ghc'").Scan(&tableName)
 	suite.Require().Error(err)
 	suite.Require().Equal(gosql.ErrNoRows, err)
 
 	// Verify the old table was renamed
 	//nolint:execinquery
-	err = suite.db.QueryRow("SHOW TABLES IN test LIKE '_testing_del'").Scan(&tableName)
+	err = suite.db.QueryRow("SHOW TABLES IN bbdataarchive LIKE '~testing_del'").Scan(&tableName)
 	suite.Require().NoError(err)
-	suite.Require().Equal("_testing_del", tableName)
+	suite.Require().Equal("~testing_del", tableName)
 }
 
 func (suite *MigratorTestSuite) TestRetryBatchCopyWithHooks() {

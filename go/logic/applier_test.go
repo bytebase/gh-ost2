@@ -107,6 +107,7 @@ func TestApplierBuildDMLEventQuery(t *testing.T) {
 	migrationContext := base.NewMigrationContext()
 	migrationContext.DatabaseName = "test"
 	migrationContext.OriginalTableName = "test"
+	migrationContext.GhostDatabaseName = "bbdataarchive"
 	migrationContext.OriginalTableColumns = columns
 	migrationContext.SharedColumns = columns
 	migrationContext.MappedSharedColumns = columns
@@ -128,9 +129,9 @@ func TestApplierBuildDMLEventQuery(t *testing.T) {
 		res := applier.buildDMLEventQuery(binlogEvent)
 		require.Len(t, res, 1)
 		require.NoError(t, res[0].err)
-		require.Equal(t, `delete /* gh-ost `+"`test`.`_test_gho`"+` */
+		require.Equal(t, `delete /* gh-ost `+"`bbdataarchive`.`~test_gho`"+` */
 		from
-			`+"`test`.`_test_gho`"+`
+			`+"`bbdataarchive`.`~test_gho`"+`
 		where
 			((`+"`id`"+` = ?) and (`+"`item_id`"+` = ?))`,
 			strings.TrimSpace(res[0].query))
@@ -149,9 +150,9 @@ func TestApplierBuildDMLEventQuery(t *testing.T) {
 		require.Len(t, res, 1)
 		require.NoError(t, res[0].err)
 		require.Equal(t,
-			`insert /* gh-ost `+"`test`.`_test_gho`"+` */ ignore
+			`insert /* gh-ost `+"`bbdataarchive`.`~test_gho`"+` */ ignore
 		into
-			`+"`test`.`_test_gho`"+`
+			`+"`bbdataarchive`.`~test_gho`"+`
 			`+"(`id`, `item_id`)"+`
 		values
 			(?, ?)`,
@@ -172,8 +173,8 @@ func TestApplierBuildDMLEventQuery(t *testing.T) {
 		require.Len(t, res, 1)
 		require.NoError(t, res[0].err)
 		require.Equal(t,
-			`update /* gh-ost `+"`test`.`_test_gho`"+` */
-			`+"`test`.`_test_gho`"+`
+			`update /* gh-ost `+"`bbdataarchive`.`~test_gho`"+` */
+			`+"`bbdataarchive`.`~test_gho`"+`
 		set
 			`+"`id`"+`=?, `+"`item_id`"+`=?
 		where
@@ -304,6 +305,9 @@ func (suite *ApplierTestSuite) SetupTest() {
 	ctx := context.Background()
 	_, err := suite.db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", testMysqlDatabase))
 	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS bbdataarchive")
+	suite.Require().NoError(err)
 }
 
 func (suite *ApplierTestSuite) TearDownTest() {
@@ -312,6 +316,9 @@ func (suite *ApplierTestSuite) TearDownTest() {
 	_, err := suite.db.ExecContext(ctx, "DROP TABLE IF EXISTS "+getTestTableName())
 	suite.Require().NoError(err)
 	_, err = suite.db.ExecContext(ctx, "DROP TABLE IF EXISTS "+getTestGhostTableName())
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, "DROP DATABASE IF EXISTS bbdataarchive")
 	suite.Require().NoError(err)
 }
 
@@ -328,6 +335,10 @@ func (suite *ApplierTestSuite) TestInitDBConnections() {
 
 	migrationContext := newTestMigrationContext()
 	migrationContext.ApplierConnectionConfig = connectionConfig
+	migrationContext.DatabaseName = "test"
+	migrationContext.GhostDatabaseName = "bbdataarchive"
+	migrationContext.SkipPortValidation = true
+	migrationContext.OriginalTableName = "testing"
 	migrationContext.SetConnectionConfig("innodb")
 
 	applier := NewApplier(migrationContext)
@@ -352,7 +363,7 @@ func (suite *ApplierTestSuite) TestApplyDMLEventQueries() {
 	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT, item_id INT);", getTestTableName()))
 	suite.Require().NoError(err)
 
-	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT, item_id INT);", getTestGhostTableName()))
+	_, err = suite.db.ExecContext(ctx, "CREATE TABLE bbdataarchive.`~testing_gho` (id INT, item_id INT);")
 	suite.Require().NoError(err)
 
 	connectionConfig, err := getTestConnectionConfig(ctx, suite.mysqlContainer)
@@ -360,6 +371,10 @@ func (suite *ApplierTestSuite) TestApplyDMLEventQueries() {
 
 	migrationContext := newTestMigrationContext()
 	migrationContext.ApplierConnectionConfig = connectionConfig
+	migrationContext.DatabaseName = "test"
+	migrationContext.GhostDatabaseName = "bbdataarchive"
+	migrationContext.SkipPortValidation = true
+	migrationContext.OriginalTableName = "testing"
 	migrationContext.SetConnectionConfig("innodb")
 
 	migrationContext.OriginalTableColumns = sql.NewColumnList([]string{"id", "item_id"})
@@ -389,7 +404,7 @@ func (suite *ApplierTestSuite) TestApplyDMLEventQueries() {
 	suite.Require().NoError(err)
 
 	// Check that the row was inserted
-	rows, err := suite.db.Query("SELECT * FROM " + getTestGhostTableName())
+	rows, err := suite.db.Query("SELECT * FROM bbdataarchive.`~testing_gho`")
 	suite.Require().NoError(err)
 	defer rows.Close()
 
@@ -422,6 +437,10 @@ func (suite *ApplierTestSuite) TestValidateOrDropExistingTables() {
 
 	migrationContext := newTestMigrationContext()
 	migrationContext.ApplierConnectionConfig = connectionConfig
+	migrationContext.DatabaseName = "test"
+	migrationContext.GhostDatabaseName = "bbdataarchive"
+	migrationContext.SkipPortValidation = true
+	migrationContext.OriginalTableName = "testing"
 	migrationContext.SetConnectionConfig("innodb")
 
 	migrationContext.OriginalTableColumns = sql.NewColumnList([]string{"id", "item_id"})
@@ -446,7 +465,7 @@ func (suite *ApplierTestSuite) TestValidateOrDropExistingTablesWithGhostTableExi
 	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT, item_id INT);", getTestTableName()))
 	suite.Require().NoError(err)
 
-	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT, item_id INT);", getTestGhostTableName()))
+	_, err = suite.db.ExecContext(ctx, "CREATE TABLE bbdataarchive.`~testing_gho` (id INT, item_id INT);")
 	suite.Require().NoError(err)
 
 	connectionConfig, err := getTestConnectionConfig(ctx, suite.mysqlContainer)
@@ -454,6 +473,10 @@ func (suite *ApplierTestSuite) TestValidateOrDropExistingTablesWithGhostTableExi
 
 	migrationContext := newTestMigrationContext()
 	migrationContext.ApplierConnectionConfig = connectionConfig
+	migrationContext.DatabaseName = "test"
+	migrationContext.GhostDatabaseName = "bbdataarchive"
+	migrationContext.SkipPortValidation = true
+	migrationContext.OriginalTableName = "testing"
 	migrationContext.SetConnectionConfig("innodb")
 
 	migrationContext.OriginalTableColumns = sql.NewColumnList([]string{"id", "item_id"})
@@ -468,7 +491,7 @@ func (suite *ApplierTestSuite) TestValidateOrDropExistingTablesWithGhostTableExi
 
 	err = applier.ValidateOrDropExistingTables()
 	suite.Require().Error(err)
-	suite.Require().EqualError(err, "Table `_testing_gho` already exists. Panicking. Use --initially-drop-ghost-table to force dropping it, though I really prefer that you drop it or rename it away")
+	suite.Require().EqualError(err, "Table `bbdataarchive`.`~testing_gho` already exists. Panicking. Use --initially-drop-ghost-table to force dropping it, though I really prefer that you drop it or rename it away")
 }
 
 func (suite *ApplierTestSuite) TestValidateOrDropExistingTablesWithGhostTableExistingAndInitiallyDropGhostTableSet() {
@@ -479,7 +502,7 @@ func (suite *ApplierTestSuite) TestValidateOrDropExistingTablesWithGhostTableExi
 	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT, item_id INT);", getTestTableName()))
 	suite.Require().NoError(err)
 
-	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT, item_id INT);", getTestGhostTableName()))
+	_, err = suite.db.ExecContext(ctx, "CREATE TABLE bbdataarchive.`~testing_gho` (id INT, item_id INT);")
 	suite.Require().NoError(err)
 
 	connectionConfig, err := getTestConnectionConfig(ctx, suite.mysqlContainer)
@@ -487,6 +510,10 @@ func (suite *ApplierTestSuite) TestValidateOrDropExistingTablesWithGhostTableExi
 
 	migrationContext := newTestMigrationContext()
 	migrationContext.ApplierConnectionConfig = connectionConfig
+	migrationContext.DatabaseName = "test"
+	migrationContext.GhostDatabaseName = "bbdataarchive"
+	migrationContext.SkipPortValidation = true
+	migrationContext.OriginalTableName = "testing"
 	migrationContext.SetConnectionConfig("innodb")
 
 	migrationContext.InitiallyDropGhostTable = true
@@ -503,7 +530,7 @@ func (suite *ApplierTestSuite) TestValidateOrDropExistingTablesWithGhostTableExi
 	// Check that the ghost table was dropped
 	var tableName string
 	//nolint:execinquery
-	err = suite.db.QueryRow(fmt.Sprintf("SHOW TABLES IN test LIKE '_%s_gho'", testMysqlTableName)).Scan(&tableName)
+	err = suite.db.QueryRow("SHOW TABLES IN bbdataarchive LIKE '~testing_gho'").Scan(&tableName)
 	suite.Require().Error(err)
 	suite.Require().Equal(gosql.ErrNoRows, err)
 }
@@ -521,6 +548,10 @@ func (suite *ApplierTestSuite) TestCreateGhostTable() {
 
 	migrationContext := newTestMigrationContext()
 	migrationContext.ApplierConnectionConfig = connectionConfig
+	migrationContext.DatabaseName = "test"
+	migrationContext.GhostDatabaseName = "bbdataarchive"
+	migrationContext.SkipPortValidation = true
+	migrationContext.OriginalTableName = "testing"
 	migrationContext.SetConnectionConfig("innodb")
 
 	migrationContext.OriginalTableColumns = sql.NewColumnList([]string{"id", "item_id"})
@@ -541,16 +572,16 @@ func (suite *ApplierTestSuite) TestCreateGhostTable() {
 	// Check that the ghost table was created
 	var tableName string
 	//nolint:execinquery
-	err = suite.db.QueryRow("SHOW TABLES IN test LIKE '_testing_gho'").Scan(&tableName)
+	err = suite.db.QueryRow("SHOW TABLES IN bbdataarchive LIKE '~testing_gho'").Scan(&tableName)
 	suite.Require().NoError(err)
-	suite.Require().Equal("_testing_gho", tableName)
+	suite.Require().Equal("~testing_gho", tableName)
 
 	// Check that the ghost table has the same columns as the original table
 	var createDDL string
 	//nolint:execinquery
-	err = suite.db.QueryRow(fmt.Sprintf("SHOW CREATE TABLE %s", getTestGhostTableName())).Scan(&tableName, &createDDL)
+	err = suite.db.QueryRow("SHOW CREATE TABLE bbdataarchive.`~testing_gho`").Scan(&tableName, &createDDL)
 	suite.Require().NoError(err)
-	suite.Require().Equal("CREATE TABLE `_testing_gho` (\n  `id` int DEFAULT NULL,\n  `item_id` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci", createDDL)
+	suite.Require().Equal("CREATE TABLE `~testing_gho` (\n  `id` int DEFAULT NULL,\n  `item_id` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci", createDDL)
 }
 
 func (suite *ApplierTestSuite) TestPanicOnWarningsInApplyIterationInsertQuerySucceedsWithUniqueKeyWarningInsertedByDMLEvent() {

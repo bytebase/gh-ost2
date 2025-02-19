@@ -25,15 +25,15 @@ func getTestTableName() string {
 }
 
 func getTestGhostTableName() string {
-	return fmt.Sprintf("`%s`.`_%s_gho`", testMysqlDatabase, testMysqlTableName)
+	return fmt.Sprintf("`%s`.`~%s_gho`", testMysqlDatabase, testMysqlTableName)
 }
 
 func getTestRevertedTableName() string {
-	return fmt.Sprintf("`%s`.`_%s_rev_del`", testMysqlDatabase, testMysqlTableName)
+	return fmt.Sprintf("`%s`.`~%s_rev_del`", testMysqlDatabase, testMysqlTableName)
 }
 
 func getTestOldTableName() string {
-	return fmt.Sprintf("`%s`.`_%s_del`", testMysqlDatabase, testMysqlTableName)
+	return fmt.Sprintf("`%s`.`~%s_del`", testMysqlDatabase, testMysqlTableName)
 }
 
 func getTestConnectionConfig(ctx context.Context, container testcontainers.Container) (*mysql.ConnectionConfig, error) {
