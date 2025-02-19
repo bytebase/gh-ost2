@@ -97,9 +97,9 @@ func TestHooksExecutorExecuteHooks(t *testing.T) {
 			case "GH_OST_EXECUTING_HOST":
 				require.Equal(t, migrationContext.Hostname, split[1])
 			case "GH_OST_GHOST_TABLE_NAME":
-				require.Equal(t, fmt.Sprintf("_%s_gho", migrationContext.OriginalTableName), split[1])
+				require.Equal(t, fmt.Sprintf("~%s_gho", migrationContext.OriginalTableName), split[1])
 			case "GH_OST_OLD_TABLE_NAME":
-				require.Equal(t, fmt.Sprintf("_%s_del", migrationContext.OriginalTableName), split[1])
+				require.Equal(t, fmt.Sprintf("~%s_del", migrationContext.OriginalTableName), split[1])
 			case "GH_OST_PROGRESS":
 				progress, _ := strconv.ParseFloat(split[1], 64)
 				require.Equal(t, 50.0, progress)

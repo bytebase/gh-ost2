@@ -77,6 +77,7 @@ func NewThrottleCheckResult(throttle bool, reason string, reasonHint ThrottleRea
 type MigrationContext struct {
 	Uuid string
 
+	GhostDatabaseName     string
 	DatabaseName          string
 	OriginalTableName     string
 	AlterStatement        string

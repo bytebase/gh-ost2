@@ -316,12 +316,18 @@ func (suite *MigratorTestSuite) SetupTest() {
 
 	_, err := suite.db.ExecContext(ctx, "CREATE DATABASE test")
 	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, "CREATE DATABASE bbdataarchive")
+	suite.Require().NoError(err)
 }
 
 func (suite *MigratorTestSuite) TearDownTest() {
 	ctx := context.Background()
 
 	_, err := suite.db.ExecContext(ctx, "DROP DATABASE test")
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, "DROP DATABASE bbdataarchive")
 	suite.Require().NoError(err)
 }
 
@@ -339,6 +345,7 @@ func (suite *MigratorTestSuite) TestFoo() {
 	migrationContext.ApplierConnectionConfig = connectionConfig
 	migrationContext.InspectorConnectionConfig = connectionConfig
 	migrationContext.DatabaseName = "test"
+	migrationContext.GhostDatabaseName = "bbdataarchive"
 	migrationContext.SkipPortValidation = true
 	migrationContext.OriginalTableName = "testing"
 	migrationContext.SetConnectionConfig("innodb")
@@ -368,15 +375,15 @@ func (suite *MigratorTestSuite) TestFoo() {
 
 	// Verify the changelog table was claned up
 	//nolint:execinquery
-	err = suite.db.QueryRow("SHOW TABLES IN test LIKE '_testing_ghc'").Scan(&tableName)
+	err = suite.db.QueryRow("SHOW TABLES IN bbdataarchive LIKE '~testing_ghc'").Scan(&tableName)
 	suite.Require().Error(err)
 	suite.Require().Equal(gosql.ErrNoRows, err)
 
 	// Verify the old table was renamed
 	//nolint:execinquery
-	err = suite.db.QueryRow("SHOW TABLES IN test LIKE '_testing_del'").Scan(&tableName)
+	err = suite.db.QueryRow("SHOW TABLES IN bbdataarchive LIKE '~testing_del'").Scan(&tableName)
 	suite.Require().NoError(err)
-	suite.Require().Equal("_testing_del", tableName)
+	suite.Require().Equal("~testing_del", tableName)
 }
 
 func TestMigratorRetry(t *testing.T) {

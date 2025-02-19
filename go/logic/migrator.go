@@ -847,7 +847,7 @@ func (this *Migrator) printMigrationStatusHint(writers ...io.Writer) {
 	fmt.Fprintf(w, "# Migrating %s.%s; Ghost table is %s.%s\n",
 		sql.EscapeName(this.migrationContext.DatabaseName),
 		sql.EscapeName(this.migrationContext.OriginalTableName),
-		sql.EscapeName(this.migrationContext.DatabaseName),
+		sql.EscapeName(this.migrationContext.GhostDatabaseName),
 		sql.EscapeName(this.migrationContext.GetGhostTableName()),
 	)
 	fmt.Fprintf(w, "# Migrating %+v; inspecting %+v; executing on %+v\n",
@@ -1098,7 +1098,7 @@ func (this *Migrator) initiateStreaming() error {
 	}
 	this.eventsStreamer.AddListener(
 		false,
-		this.migrationContext.DatabaseName,
+		this.migrationContext.GhostDatabaseName,
 		this.migrationContext.GetChangelogTableName(),
 		func(dmlEvent *binlog.BinlogDMLEvent) error {
 			return this.onChangelogEvent(dmlEvent)
@@ -1381,7 +1381,7 @@ func (this *Migrator) finalCleanup() error {
 	}
 
 	if this.migrationContext.Noop {
-		if createTableStatement, err := this.inspector.showCreateTable(this.migrationContext.GetGhostTableName()); err == nil {
+		if createTableStatement, err := this.inspector.showCreateTable(this.migrationContext.GhostDatabaseName, this.migrationContext.GetGhostTableName()); err == nil {
 			this.migrationContext.Log.Infof("New table structure follows")
 			fmt.Println(createTableStatement)
 		} else {
@@ -1402,7 +1402,7 @@ func (this *Migrator) finalCleanup() error {
 	} else {
 		if !this.migrationContext.Noop {
 			this.migrationContext.Log.Infof("Am not dropping old table because I want this operation to be as live as possible. If you insist I should do it, please add `--ok-to-drop-table` next time. But I prefer you do not. To drop the old table, issue:")
-			this.migrationContext.Log.Infof("-- drop table %s.%s", sql.EscapeName(this.migrationContext.DatabaseName), sql.EscapeName(this.migrationContext.GetOldTableName()))
+			this.migrationContext.Log.Infof("-- drop table %s.%s", sql.EscapeName(this.migrationContext.GhostDatabaseName), sql.EscapeName(this.migrationContext.GetOldTableName()))
 		}
 	}
 	if this.migrationContext.Noop {

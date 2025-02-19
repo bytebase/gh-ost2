@@ -96,15 +96,15 @@ func (this *Inspector) ValidateOriginalTable() (err error) {
 	return nil
 }
 
-func (this *Inspector) InspectTableColumnsAndUniqueKeys(tableName string) (columns *sql.ColumnList, virtualColumns *sql.ColumnList, uniqueKeys [](*sql.UniqueKey), err error) {
-	uniqueKeys, err = this.getCandidateUniqueKeys(tableName)
+func (this *Inspector) InspectTableColumnsAndUniqueKeys(databaseName, tableName string) (columns *sql.ColumnList, virtualColumns *sql.ColumnList, uniqueKeys [](*sql.UniqueKey), err error) {
+	uniqueKeys, err = this.getCandidateUniqueKeys(databaseName, tableName)
 	if err != nil {
 		return columns, virtualColumns, uniqueKeys, err
 	}
 	if len(uniqueKeys) == 0 {
 		return columns, virtualColumns, uniqueKeys, fmt.Errorf("No PRIMARY nor UNIQUE key found in table! Bailing out")
 	}
-	columns, virtualColumns, err = mysql.GetTableColumns(this.db, this.migrationContext.DatabaseName, tableName)
+	columns, virtualColumns, err = mysql.GetTableColumns(this.db, databaseName, tableName)
 	if err != nil {
 		return columns, virtualColumns, uniqueKeys, err
 	}
@@ -113,7 +113,7 @@ func (this *Inspector) InspectTableColumnsAndUniqueKeys(tableName string) (colum
 }
 
 func (this *Inspector) InspectOriginalTable() (err error) {
-	this.migrationContext.OriginalTableColumns, this.migrationContext.OriginalTableVirtualColumns, this.migrationContext.OriginalTableUniqueKeys, err = this.InspectTableColumnsAndUniqueKeys(this.migrationContext.OriginalTableName)
+	this.migrationContext.OriginalTableColumns, this.migrationContext.OriginalTableVirtualColumns, this.migrationContext.OriginalTableUniqueKeys, err = this.InspectTableColumnsAndUniqueKeys(this.migrationContext.DatabaseName, this.migrationContext.OriginalTableName)
 	if err != nil {
 		return err
 	}
@@ -133,7 +133,7 @@ func (this *Inspector) inspectOriginalAndGhostTables() (err error) {
 		return fmt.Errorf("It seems like table structure is not identical between master and replica. This scenario is not supported.")
 	}
 
-	this.migrationContext.GhostTableColumns, this.migrationContext.GhostTableVirtualColumns, this.migrationContext.GhostTableUniqueKeys, err = this.InspectTableColumnsAndUniqueKeys(this.migrationContext.GetGhostTableName())
+	this.migrationContext.GhostTableColumns, this.migrationContext.GhostTableVirtualColumns, this.migrationContext.GhostTableUniqueKeys, err = this.InspectTableColumnsAndUniqueKeys(this.migrationContext.GhostDatabaseName, this.migrationContext.GetGhostTableName())
 	if err != nil {
 		return err
 	}
@@ -182,7 +182,7 @@ func (this *Inspector) inspectOriginalAndGhostTables() (err error) {
 	// the `getTableColumns()` function, but it's a later patch and introduces some complexity; I feel
 	// comfortable in doing this as a separate step.
 	this.applyColumnTypes(this.migrationContext.DatabaseName, this.migrationContext.OriginalTableName, this.migrationContext.OriginalTableColumns, this.migrationContext.SharedColumns, &this.migrationContext.UniqueKey.Columns)
-	this.applyColumnTypes(this.migrationContext.DatabaseName, this.migrationContext.GetGhostTableName(), this.migrationContext.GhostTableColumns, this.migrationContext.MappedSharedColumns)
+	this.applyColumnTypes(this.migrationContext.GhostDatabaseName, this.migrationContext.GetGhostTableName(), this.migrationContext.GhostTableColumns, this.migrationContext.MappedSharedColumns)
 
 	for i := range this.migrationContext.SharedColumns.Columns() {
 		column := this.migrationContext.SharedColumns.Columns()[i]
@@ -698,7 +698,7 @@ func (this *Inspector) getAutoIncrementValue(tableName string) (autoIncrement ui
 
 // getCandidateUniqueKeys investigates a table and returns the list of unique keys
 // candidate for chunking
-func (this *Inspector) getCandidateUniqueKeys(tableName string) (uniqueKeys [](*sql.UniqueKey), err error) {
+func (this *Inspector) getCandidateUniqueKeys(databaseName, tableName string) (uniqueKeys [](*sql.UniqueKey), err error) {
 	query := `
 		SELECT /* gh-ost */
 			COLUMNS.TABLE_SCHEMA,
@@ -770,7 +770,7 @@ func (this *Inspector) getCandidateUniqueKeys(tableName string) (uniqueKeys [](*
 		}
 		uniqueKeys = append(uniqueKeys, uniqueKey)
 		return nil
-	}, this.migrationContext.DatabaseName, tableName, this.migrationContext.DatabaseName, tableName)
+	}, databaseName, tableName, databaseName, tableName)
 	if err != nil {
 		return uniqueKeys, err
 	}
@@ -841,9 +841,9 @@ func (this *Inspector) getSharedColumns(originalColumns, ghostColumns *sql.Colum
 }
 
 // showCreateTable returns the `show create table` statement for given table
-func (this *Inspector) showCreateTable(tableName string) (createTableStatement string, err error) {
+func (this *Inspector) showCreateTable(databaseName, tableName string) (createTableStatement string, err error) {
 	var dummy string
-	query := fmt.Sprintf(`show /* gh-ost */ create table %s.%s`, sql.EscapeName(this.migrationContext.DatabaseName), sql.EscapeName(tableName))
+	query := fmt.Sprintf(`show /* gh-ost */ create table %s.%s`, sql.EscapeName(databaseName), sql.EscapeName(tableName))
 	err = this.db.QueryRow(query).Scan(&dummy, &createTableStatement)
 	return createTableStatement, err
 }
@@ -856,7 +856,7 @@ func (this *Inspector) readChangelogState(hint string) (string, error) {
 			%s.%s
 		where
 			hint = ? and id <= 255`,
-		sql.EscapeName(this.migrationContext.DatabaseName),
+		sql.EscapeName(this.migrationContext.GhostDatabaseName),
 		sql.EscapeName(this.migrationContext.GetChangelogTableName()),
 	)
 	result := ""
