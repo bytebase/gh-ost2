@@ -134,6 +134,9 @@ func (this *Server) BindTCPPort() (err error) {
 // Serve begins listening & serving on whichever device was configured
 func (this *Server) Serve() (err error) {
 	go func() {
+		if this.unixListener == nil {
+			return
+		}
 		for {
 			conn, err := this.unixListener.Accept()
 			if err != nil {
