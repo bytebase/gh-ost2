@@ -219,5 +219,7 @@ func (this *EventsStreamer) Close() (err error) {
 }
 
 func (this *EventsStreamer) Teardown() {
+	err := this.binlogReader.Close()
+	this.migrationContext.Log.Infof("Closed streamer connection. err=%+v", err)
 	this.db.Close()
 }
