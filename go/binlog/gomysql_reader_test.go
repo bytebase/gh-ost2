@@ -176,9 +176,9 @@ func TestAuthFailureCounterIncrement(t *testing.T) {
 
 	// Test that counter increments only for auth errors
 	testCases := []struct {
-		err           error
-		shouldCount   bool
-		description   string
+		err         error
+		shouldCount bool
+		description string
 	}{
 		{&gomysql.MyError{Code: 1045, Message: "Access denied"}, true, "MySQL 1045 error"},
 		{errors.New("connection timeout"), false, "Non-auth error"},

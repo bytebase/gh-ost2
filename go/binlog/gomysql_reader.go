@@ -123,7 +123,7 @@ func (this *GoMySQLReader) handleRowsEvent(ev *replication.BinlogEvent, rowsEven
 	currentCoords := this.GetCurrentBinlogCoordinates()
 	dml := ToEventDML(ev.Header.EventType.String())
 	if dml == NotDML {
-		return fmt.Errorf("Unknown DML type: %s", ev.Header.EventType.String())
+		return fmt.Errorf("unknown DML type: %s", ev.Header.EventType.String())
 	}
 	for i, row := range rowsEvent.Rows {
 		if dml == UpdateDML && i%2 == 1 {
@@ -167,10 +167,7 @@ func (this *GoMySQLReader) StreamEvents(canStopStreaming func() bool, entriesCha
 	if canStopStreaming() {
 		return nil
 	}
-	for {
-		if canStopStreaming() {
-			break
-		}
+	for !canStopStreaming() {
 		ev, err := this.binlogStreamer.GetEvent(context.Background())
 		if err != nil {
 			// Handle authentication errors with circuit breaker
