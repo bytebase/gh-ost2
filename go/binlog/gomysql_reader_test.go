@@ -175,33 +175,50 @@ func TestAuthFailureCounterIncrement(t *testing.T) {
 	}
 
 	// Test that counter increments only for auth errors
-	errors := []struct {
-		err         error
-		shouldCount bool
+	testCases := []struct {
+		err           error
+		shouldCount   bool
+		description   string
 	}{
-		{errors.New("ERROR 1045: Access denied"), true},
-		{errors.New("connection timeout"), false},
-		{errors.New("ERROR 1130: Host not allowed"), true},
-		{errors.New("syntax error"), false},
-		{nil, false},
+		{&gomysql.MyError{Code: 1045, Message: "Access denied"}, true, "MySQL 1045 error"},
+		{errors.New("connection timeout"), false, "Non-auth error"},
+		{&gomysql.MyError{Code: 1130, Message: "Host not allowed"}, true, "MySQL 1130 error"},
+		{errors.New("syntax error"), false, "SQL syntax error"},
+		{nil, false, "Nil error"},
+		{errors.New("access denied for user"), true, "String fallback auth error"},
 	}
 
-	expectedCount := 0
-	for _, e := range errors {
-		if reader.isAuthenticationError(e.err) {
-			reader.authFailureCount++
-			if e.shouldCount {
-				expectedCount++
-			} else {
-				t.Errorf("Counter incremented for non-auth error: %v", e.err)
+	for _, tc := range testCases {
+		initialCount := reader.authFailureCount
+
+		// For nil errors, handleAuthError would reset the counter
+		// So we test isAuthenticationError directly for nil
+		if tc.err == nil {
+			if reader.isAuthenticationError(tc.err) {
+				t.Errorf("%s: nil should not be detected as auth error", tc.description)
 			}
-		} else if e.shouldCount {
-			t.Errorf("Counter did not increment for auth error: %v", e.err)
+			continue
+		}
+
+		// Use handleAuthError which manages the counter
+		reader.handleAuthError(tc.err, "test")
+
+		if tc.shouldCount {
+			if reader.authFailureCount != initialCount+1 {
+				t.Errorf("%s: Counter did not increment for auth error: %v", tc.description, tc.err)
+			}
+		} else {
+			if reader.authFailureCount != initialCount {
+				t.Errorf("%s: Counter incorrectly incremented for non-auth error: %v", tc.description, tc.err)
+			}
 		}
 	}
 
-	if reader.authFailureCount != expectedCount {
-		t.Errorf("Expected auth failure count %d, got %d", expectedCount, reader.authFailureCount)
+	// Test that successful operation resets counter
+	reader.authFailureCount = 5
+	reader.handleAuthError(nil, "test success")
+	if reader.authFailureCount != 0 {
+		t.Errorf("Counter not reset on success, got %d", reader.authFailureCount)
 	}
 }
 
