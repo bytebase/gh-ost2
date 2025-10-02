@@ -75,7 +75,7 @@ func (this *GoMySQLReader) handleAuthError(err error, context string) error {
 	this.authFailureCount++
 
 	if this.migrationContext.MaxAuthFailures > 0 && this.authFailureCount >= this.migrationContext.MaxAuthFailures {
-		return fmt.Errorf("authentication failed %d times (max: %d) during %s, aborting to prevent firewall blocking: %v",
+		return fmt.Errorf("authentication failed %d times (max: %d) during %s, aborting to prevent firewall blocking: %w",
 			this.authFailureCount, this.migrationContext.MaxAuthFailures, context, err)
 	}
 
