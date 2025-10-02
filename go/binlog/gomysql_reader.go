@@ -113,7 +113,7 @@ func (this *GoMySQLReader) GetCurrentBinlogCoordinates() *mysql.BinlogCoordinate
 // StreamEvents
 func (this *GoMySQLReader) handleRowsEvent(ev *replication.BinlogEvent, rowsEvent *replication.RowsEvent, entriesChannel chan<- *BinlogEntry) error {
 	if this.currentCoordinates.IsLogPosOverflowBeyond4Bytes(&this.LastAppliedRowsEventHint) {
-		return fmt.Errorf("Unexpected rows event at %+v, the binlog end_log_pos is overflow 4 bytes", this.currentCoordinates)
+		return fmt.Errorf("unexpected rows event at %+v, the binlog end_log_pos is overflow 4 bytes", this.currentCoordinates)
 	}
 
 	if this.currentCoordinates.SmallerThanOrEquals(&this.LastAppliedRowsEventHint) {
@@ -123,7 +123,7 @@ func (this *GoMySQLReader) handleRowsEvent(ev *replication.BinlogEvent, rowsEven
 
 	dml := ToEventDML(ev.Header.EventType.String())
 	if dml == NotDML {
-		return fmt.Errorf("Unknown DML type: %s", ev.Header.EventType.String())
+		return fmt.Errorf("unknown DML type: %s", ev.Header.EventType.String())
 	}
 	for i, row := range rowsEvent.Rows {
 		if dml == UpdateDML && i%2 == 1 {
@@ -167,10 +167,7 @@ func (this *GoMySQLReader) StreamEvents(canStopStreaming func() bool, entriesCha
 	if canStopStreaming() {
 		return nil
 	}
-	for {
-		if canStopStreaming() {
-			break
-		}
+	for !canStopStreaming() {
 		ev, err := this.binlogStreamer.GetEvent(context.Background())
 		if err != nil {
 			// Handle authentication errors with circuit breaker
