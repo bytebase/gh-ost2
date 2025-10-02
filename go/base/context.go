@@ -104,6 +104,10 @@ type MigrationContext struct {
 	AzureMySQL               bool
 	AttemptInstantDDL        bool
 
+	// MaxAuthFailures is the maximum number of authentication failures before aborting
+	// This prevents retry storms that can trigger firewall rules
+	MaxAuthFailures int
+
 	// SkipPortValidation allows skipping the port validation in `ValidateConnection`
 	// This is useful when connecting to a MySQL instance where the external port
 	// may not match the internal port.
@@ -358,6 +362,16 @@ func (this *MigrationContext) GetOldTableName() string {
 		return getSafeTableName(tableName, fmt.Sprintf("%s_del", timestamp))
 	}
 	return getSafeTableName(tableName, "del")
+}
+
+// GetGhostDatabaseName returns the database name for ghost/changelog tables
+// If GhostDatabaseName is set (for separate schema), use it
+// Otherwise, use the same database as the original table
+func (this *MigrationContext) GetGhostDatabaseName() string {
+	if this.GhostDatabaseName != "" {
+		return this.GhostDatabaseName
+	}
+	return this.DatabaseName
 }
 
 // GetChangelogTableName generates the name of changelog table, based on original table name
