@@ -55,6 +55,36 @@ func NewGoMySQLReader(migrationContext *base.MigrationContext) *GoMySQLReader {
 	}
 }
 
+// handleAuthError processes authentication errors and applies circuit breaker logic
+func (this *GoMySQLReader) handleAuthError(err error, context string) error {
+	if err == nil {
+		// Success case - reset counter if needed
+		if this.authFailureCount > 0 {
+			this.migrationContext.Log.Infof("%s successful, resetting auth failure count from %d to 0", context, this.authFailureCount)
+			this.authFailureCount = 0
+		}
+		return nil
+	}
+
+	// Check if this is an authentication error
+	if !this.isAuthenticationError(err) {
+		return err // Not an auth error, return as-is
+	}
+
+	// Authentication error - increment counter and check circuit breaker
+	this.authFailureCount++
+
+	if this.migrationContext.MaxAuthFailures > 0 && this.authFailureCount >= this.migrationContext.MaxAuthFailures {
+		return fmt.Errorf("authentication failed %d times (max: %d) during %s, aborting to prevent firewall blocking: %v",
+			this.authFailureCount, this.migrationContext.MaxAuthFailures, context, err)
+	}
+
+	this.migrationContext.Log.Errorf("Authentication failure #%d during %s (max: %d): %v",
+		this.authFailureCount, context, this.migrationContext.MaxAuthFailures, err)
+
+	return err
+}
+
 // ConnectBinlogStreamer
 func (this *GoMySQLReader) ConnectBinlogStreamer(coordinates mysql.BinlogCoordinates) (err error) {
 	if coordinates.IsEmpty() {
@@ -69,27 +99,8 @@ func (this *GoMySQLReader) ConnectBinlogStreamer(coordinates mysql.BinlogCoordin
 		Pos:  uint32(this.currentCoordinates.LogPos),
 	})
 
-	if err != nil {
-		// Check for authentication failure and apply circuit breaker
-		if this.isAuthenticationError(err) {
-			this.authFailureCount++
-			if this.migrationContext.MaxAuthFailures > 0 && this.authFailureCount >= this.migrationContext.MaxAuthFailures {
-				return fmt.Errorf("authentication failed %d times (max: %d), aborting to prevent firewall blocking: %v",
-					this.authFailureCount, this.migrationContext.MaxAuthFailures, err)
-			}
-			this.migrationContext.Log.Errorf("Authentication failure #%d (max: %d): %v",
-				this.authFailureCount, this.migrationContext.MaxAuthFailures, err)
-		}
-		return err
-	}
-
-	// Reset auth failure count on successful connection
-	if this.authFailureCount > 0 {
-		this.migrationContext.Log.Infof("Connection successful, resetting auth failure count from %d to 0", this.authFailureCount)
-		this.authFailureCount = 0
-	}
-
-	return nil
+	// Handle the error (or success) with circuit breaker logic
+	return this.handleAuthError(err, "connection")
 }
 
 func (this *GoMySQLReader) GetCurrentBinlogCoordinates() *mysql.BinlogCoordinates {
@@ -162,25 +173,12 @@ func (this *GoMySQLReader) StreamEvents(canStopStreaming func() bool, entriesCha
 		}
 		ev, err := this.binlogStreamer.GetEvent(context.Background())
 		if err != nil {
-			// Check for authentication failure and apply circuit breaker
-			if this.isAuthenticationError(err) {
-				this.authFailureCount++
-				if this.migrationContext.MaxAuthFailures > 0 && this.authFailureCount >= this.migrationContext.MaxAuthFailures {
-					return fmt.Errorf("authentication failed %d times (max: %d) during streaming, aborting to prevent firewall blocking: %v",
-						this.authFailureCount, this.migrationContext.MaxAuthFailures, err)
-				}
-				this.migrationContext.Log.Errorf("Authentication failure #%d during streaming (max: %d): %v",
-					this.authFailureCount, this.migrationContext.MaxAuthFailures, err)
-			}
-			return err
+			// Handle authentication errors with circuit breaker
+			return this.handleAuthError(err, "streaming")
 		}
 
-		// Reset auth failure count on successful event retrieval
-		// This handles cases where temporary auth issues are resolved
-		if this.authFailureCount > 0 {
-			this.migrationContext.Log.Debugf("Event stream recovered, resetting auth failure count from %d to 0", this.authFailureCount)
-			this.authFailureCount = 0
-		}
+		// Reset counter on successful event (using handleAuthError with nil)
+		this.handleAuthError(nil, "event retrieval")
 
 		func() {
 			this.currentCoordinatesMutex.Lock()
