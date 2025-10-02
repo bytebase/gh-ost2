@@ -508,12 +508,15 @@ func (this *Applier) CreateCheckpointTable() error {
 
 // dropTable drops a given table on the applied host
 func (this *Applier) dropTable(tableName string) error {
+	// Use the helper method to get database name with fallback
+	databaseName := this.migrationContext.GetGhostDatabaseName()
+
 	query := fmt.Sprintf(`drop /* gh-ost */ table if exists %s.%s`,
-		sql.EscapeName(this.migrationContext.GetGhostDatabaseName()),
+		sql.EscapeName(databaseName),
 		sql.EscapeName(tableName),
 	)
 	this.migrationContext.Log.Infof("Dropping table %s.%s",
-		sql.EscapeName(this.migrationContext.GetGhostDatabaseName()),
+		sql.EscapeName(databaseName),
 		sql.EscapeName(tableName),
 	)
 	if _, err := sqlutils.ExecNoPrepare(this.db, query); err != nil {

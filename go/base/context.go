@@ -368,14 +368,6 @@ func getSafeTableName(baseName string, suffix string) string {
 	return fmt.Sprintf("~%s_%s", baseName[0:len(baseName)-extraCharacters], suffix)
 }
 
-// GetGhostDatabaseName returns the database name used for ghost/changelog tables.
-func (this *MigrationContext) GetGhostDatabaseName() string {
-	if this.GhostDatabaseName != "" {
-		return this.GhostDatabaseName
-	}
-	return this.DatabaseName
-}
-
 // GetGhostTableName generates the name of ghost table, based on original table name
 // or a given table name
 func (this *MigrationContext) GetGhostTableName() string {
@@ -411,6 +403,16 @@ func (this *MigrationContext) GetOldTableName() string {
 		return getSafeTableName(tableName, fmt.Sprintf("%s_%s", timestamp, suffix))
 	}
 	return getSafeTableName(tableName, suffix)
+}
+
+// GetGhostDatabaseName returns the database name for ghost/changelog tables
+// If GhostDatabaseName is set (for separate schema), use it
+// Otherwise, use the same database as the original table
+func (this *MigrationContext) GetGhostDatabaseName() string {
+	if this.GhostDatabaseName != "" {
+		return this.GhostDatabaseName
+	}
+	return this.DatabaseName
 }
 
 // GetChangelogTableName generates the name of changelog table, based on original table name
