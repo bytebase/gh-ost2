@@ -213,11 +213,11 @@ func (this *GoMySQLReader) Close() error {
 
 // MySQL error codes for authentication failures
 const (
-	ER_DBACCESS_DENIED_ERROR    = 1044 // Access denied for user to database
-	ER_ACCESS_DENIED_ERROR      = 1045 // Access denied for user (using password: YES/NO)
-	ER_HOST_NOT_ALLOWED         = 1130 // Host is not allowed to connect
+	ER_DBACCESS_DENIED_ERROR     = 1044 // Access denied for user to database
+	ER_ACCESS_DENIED_ERROR       = 1045 // Access denied for user (using password: YES/NO)
+	ER_HOST_NOT_ALLOWED          = 1130 // Host is not allowed to connect
 	ER_ACCESS_DENIED_NO_PASSWORD = 1698 // Access denied (no password provided)
-	ER_ACCOUNT_HAS_BEEN_LOCKED  = 3118 // Account has been locked
+	ER_ACCOUNT_HAS_BEEN_LOCKED   = 3118 // Account has been locked
 )
 
 // isAuthenticationError checks if the error is an authentication failure
