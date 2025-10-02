@@ -104,6 +104,10 @@ type MigrationContext struct {
 	AzureMySQL               bool
 	AttemptInstantDDL        bool
 
+	// MaxAuthFailures is the maximum number of authentication failures before aborting
+	// This prevents retry storms that can trigger firewall rules
+	MaxAuthFailures int
+
 	// SkipPortValidation allows skipping the port validation in `ValidateConnection`
 	// This is useful when connecting to a MySQL instance where the external port
 	// may not match the internal port.

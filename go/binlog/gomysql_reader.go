@@ -7,11 +7,13 @@ package binlog
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/github/gh-ost/go/base"
 	"github.com/github/gh-ost/go/mysql"
 	"github.com/github/gh-ost/go/sql"
+	"github.com/pkg/errors"
 
 	"time"
 
@@ -28,6 +30,7 @@ type GoMySQLReader struct {
 	currentCoordinates       mysql.BinlogCoordinates
 	currentCoordinatesMutex  *sync.Mutex
 	LastAppliedRowsEventHint mysql.BinlogCoordinates
+	authFailureCount         int
 }
 
 func NewGoMySQLReader(migrationContext *base.MigrationContext) *GoMySQLReader {
@@ -66,7 +69,27 @@ func (this *GoMySQLReader) ConnectBinlogStreamer(coordinates mysql.BinlogCoordin
 		Pos:  uint32(this.currentCoordinates.LogPos),
 	})
 
-	return err
+	if err != nil {
+		// Check for authentication failure and apply circuit breaker
+		if this.isAuthenticationError(err) {
+			this.authFailureCount++
+			if this.migrationContext.MaxAuthFailures > 0 && this.authFailureCount >= this.migrationContext.MaxAuthFailures {
+				return fmt.Errorf("authentication failed %d times (max: %d), aborting to prevent firewall blocking: %v",
+					this.authFailureCount, this.migrationContext.MaxAuthFailures, err)
+			}
+			this.migrationContext.Log.Errorf("Authentication failure #%d (max: %d): %v",
+				this.authFailureCount, this.migrationContext.MaxAuthFailures, err)
+		}
+		return err
+	}
+
+	// Reset auth failure count on successful connection
+	if this.authFailureCount > 0 {
+		this.migrationContext.Log.Infof("Connection successful, resetting auth failure count from %d to 0", this.authFailureCount)
+		this.authFailureCount = 0
+	}
+
+	return nil
 }
 
 func (this *GoMySQLReader) GetCurrentBinlogCoordinates() *mysql.BinlogCoordinates {
@@ -139,8 +162,26 @@ func (this *GoMySQLReader) StreamEvents(canStopStreaming func() bool, entriesCha
 		}
 		ev, err := this.binlogStreamer.GetEvent(context.Background())
 		if err != nil {
+			// Check for authentication failure and apply circuit breaker
+			if this.isAuthenticationError(err) {
+				this.authFailureCount++
+				if this.migrationContext.MaxAuthFailures > 0 && this.authFailureCount >= this.migrationContext.MaxAuthFailures {
+					return fmt.Errorf("authentication failed %d times (max: %d) during streaming, aborting to prevent firewall blocking: %v",
+						this.authFailureCount, this.migrationContext.MaxAuthFailures, err)
+				}
+				this.migrationContext.Log.Errorf("Authentication failure #%d during streaming (max: %d): %v",
+					this.authFailureCount, this.migrationContext.MaxAuthFailures, err)
+			}
 			return err
 		}
+
+		// Reset auth failure count on successful event retrieval
+		// This handles cases where temporary auth issues are resolved
+		if this.authFailureCount > 0 {
+			this.migrationContext.Log.Debugf("Event stream recovered, resetting auth failure count from %d to 0", this.authFailureCount)
+			this.authFailureCount = 0
+		}
+
 		func() {
 			this.currentCoordinatesMutex.Lock()
 			defer this.currentCoordinatesMutex.Unlock()
@@ -170,4 +211,39 @@ func (this *GoMySQLReader) StreamEvents(canStopStreaming func() bool, entriesCha
 func (this *GoMySQLReader) Close() error {
 	this.binlogSyncer.Close()
 	return nil
+}
+
+// MySQL error codes for authentication failures
+const (
+	ER_DBACCESS_DENIED_ERROR    = 1044 // Access denied for user to database
+	ER_ACCESS_DENIED_ERROR      = 1045 // Access denied for user (using password: YES/NO)
+	ER_HOST_NOT_ALLOWED         = 1130 // Host is not allowed to connect
+	ER_ACCESS_DENIED_NO_PASSWORD = 1698 // Access denied (no password provided)
+	ER_ACCOUNT_HAS_BEEN_LOCKED  = 3118 // Account has been locked
+)
+
+// isAuthenticationError checks if the error is an authentication failure
+func (this *GoMySQLReader) isAuthenticationError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for MySQL protocol errors using proper type assertion
+	var myErr *gomysql.MyError
+	if errors.As(err, &myErr) {
+		switch myErr.Code {
+		case ER_ACCESS_DENIED_ERROR,
+			ER_DBACCESS_DENIED_ERROR,
+			ER_HOST_NOT_ALLOWED,
+			ER_ACCESS_DENIED_NO_PASSWORD,
+			ER_ACCOUNT_HAS_BEEN_LOCKED:
+			return true
+		}
+	}
+
+	// Fallback: Check error string for compatibility with errors
+	// that might not be properly typed (e.g., from proxy or older versions)
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "access denied") ||
+		strings.Contains(errStr, "authentication failed")
 }
