@@ -232,7 +232,8 @@ func (this *Inspector) validateGrants() error {
 	foundSuper := false
 	foundReplicationClient := false
 	foundReplicationSlave := false
-	foundDBAll := false
+	requiredDatabases := this.requiredMigrationDatabases()
+	foundDBAll := make(map[string]bool, len(requiredDatabases))
 
 	err := sqlutils.QueryRowsMap(this.db, query, func(rowMap sqlutils.RowMap) error {
 		for _, grantData := range rowMap {
@@ -249,17 +250,15 @@ func (this *Inspector) validateGrants() error {
 			if strings.Contains(grant, `REPLICATION SLAVE`) && strings.Contains(grant, ` ON *.*`) {
 				foundReplicationSlave = true
 			}
-			if strings.Contains(grant, fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.*", this.migrationContext.DatabaseName)) {
-				foundDBAll = true
-			}
-			if strings.Contains(grant, fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.*", strings.Replace(this.migrationContext.DatabaseName, "_", "\\_", -1))) {
-				foundDBAll = true
-			}
 			if base.StringContainsAll(grant, `ALTER`, `CREATE`, `DELETE`, `DROP`, `INDEX`, `INSERT`, `LOCK TABLES`, `SELECT`, `TRIGGER`, `UPDATE`, ` ON *.*`) {
-				foundDBAll = true
+				for _, databaseName := range requiredDatabases {
+					foundDBAll[databaseName] = true
+				}
 			}
-			if base.StringContainsAll(grant, `ALTER`, `CREATE`, `DELETE`, `DROP`, `INDEX`, `INSERT`, `LOCK TABLES`, `SELECT`, `TRIGGER`, `UPDATE`, fmt.Sprintf(" ON `%s`.*", this.migrationContext.DatabaseName)) {
-				foundDBAll = true
+			for _, databaseName := range requiredDatabases {
+				if this.grantAppliesToDatabase(grant, databaseName) {
+					foundDBAll[databaseName] = true
+				}
 			}
 		}
 		return nil
@@ -273,16 +272,65 @@ func (this *Inspector) validateGrants() error {
 		this.migrationContext.Log.Infof("User has ALL privileges")
 		return nil
 	}
-	if foundSuper && foundReplicationSlave && foundDBAll {
-		this.migrationContext.Log.Infof("User has SUPER, REPLICATION SLAVE privileges, and has ALL privileges on %s.*", sql.EscapeName(this.migrationContext.DatabaseName))
+	hasRequiredDBGrants, missingDatabases := this.hasRequiredDatabaseGrants(requiredDatabases, foundDBAll)
+	escapedDatabases := this.formatRequiredDatabases(requiredDatabases)
+	if foundSuper && foundReplicationSlave && hasRequiredDBGrants {
+		this.migrationContext.Log.Infof("User has SUPER, REPLICATION SLAVE privileges, and has ALL privileges on %s", escapedDatabases)
 		return nil
 	}
-	if foundReplicationClient && foundReplicationSlave && foundDBAll {
-		this.migrationContext.Log.Infof("User has REPLICATION CLIENT, REPLICATION SLAVE privileges, and has ALL privileges on %s.*", sql.EscapeName(this.migrationContext.DatabaseName))
+	if foundReplicationClient && foundReplicationSlave && hasRequiredDBGrants {
+		this.migrationContext.Log.Infof("User has REPLICATION CLIENT, REPLICATION SLAVE privileges, and has ALL privileges on %s", escapedDatabases)
 		return nil
 	}
-	this.migrationContext.Log.Debugf("Privileges: Super: %t, REPLICATION CLIENT: %t, REPLICATION SLAVE: %t, ALL on *.*: %t, ALL on %s.*: %t", foundSuper, foundReplicationClient, foundReplicationSlave, foundAll, sql.EscapeName(this.migrationContext.DatabaseName), foundDBAll)
-	return this.migrationContext.Log.Errorf("User has insufficient privileges for migration. Needed: SUPER|REPLICATION CLIENT, REPLICATION SLAVE and ALL on %s.*", sql.EscapeName(this.migrationContext.DatabaseName))
+	this.migrationContext.Log.Debugf("Privileges: Super: %t, REPLICATION CLIENT: %t, REPLICATION SLAVE: %t, ALL on *.*: %t, ALL on %s: %t", foundSuper, foundReplicationClient, foundReplicationSlave, foundAll, escapedDatabases, hasRequiredDBGrants)
+	if len(missingDatabases) > 0 {
+		return this.migrationContext.Log.Errorf("User has insufficient privileges for migration. Needed: SUPER|REPLICATION CLIENT, REPLICATION SLAVE and ALL on %s. Missing grants on %s", escapedDatabases, this.formatRequiredDatabases(missingDatabases))
+	}
+	return this.migrationContext.Log.Errorf("User has insufficient privileges for migration. Needed: SUPER|REPLICATION CLIENT, REPLICATION SLAVE and ALL on %s", escapedDatabases)
+}
+
+func (this *Inspector) requiredMigrationDatabases() []string {
+	databases := []string{this.migrationContext.DatabaseName}
+	ghostDatabaseName := this.migrationContext.GetGhostDatabaseName()
+	if ghostDatabaseName != this.migrationContext.DatabaseName {
+		databases = append(databases, ghostDatabaseName)
+	}
+	return databases
+}
+
+func (this *Inspector) grantAppliesToDatabase(grant string, databaseName string) bool {
+	escapedDatabaseName := strings.Replace(databaseName, "_", "\\_", -1)
+	if strings.Contains(grant, fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.*", databaseName)) {
+		return true
+	}
+	if strings.Contains(grant, fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.*", escapedDatabaseName)) {
+		return true
+	}
+	if base.StringContainsAll(grant, `ALTER`, `CREATE`, `DELETE`, `DROP`, `INDEX`, `INSERT`, `LOCK TABLES`, `SELECT`, `TRIGGER`, `UPDATE`, fmt.Sprintf(" ON `%s`.*", databaseName)) {
+		return true
+	}
+	if base.StringContainsAll(grant, `ALTER`, `CREATE`, `DELETE`, `DROP`, `INDEX`, `INSERT`, `LOCK TABLES`, `SELECT`, `TRIGGER`, `UPDATE`, fmt.Sprintf(" ON `%s`.*", escapedDatabaseName)) {
+		return true
+	}
+	return false
+}
+
+func (this *Inspector) hasRequiredDatabaseGrants(requiredDatabases []string, foundDBAll map[string]bool) (bool, []string) {
+	var missingDatabases []string
+	for _, databaseName := range requiredDatabases {
+		if !foundDBAll[databaseName] {
+			missingDatabases = append(missingDatabases, databaseName)
+		}
+	}
+	return len(missingDatabases) == 0, missingDatabases
+}
+
+func (this *Inspector) formatRequiredDatabases(databaseNames []string) string {
+	escapedDatabases := make([]string, 0, len(databaseNames))
+	for _, databaseName := range databaseNames {
+		escapedDatabases = append(escapedDatabases, fmt.Sprintf("%s.*", sql.EscapeName(databaseName)))
+	}
+	return strings.Join(escapedDatabases, ", ")
 }
 
 // restartReplication is required so that we are _certain_ the binlog format and
@@ -572,6 +620,14 @@ func (this *Inspector) validateTableTriggers() error {
 	if numTriggers > 0 {
 		if this.migrationContext.IncludeTriggers {
 			this.migrationContext.Log.Infof("Found %d triggers on %s.%s.", numTriggers, sql.EscapeName(this.migrationContext.DatabaseName), sql.EscapeName(this.migrationContext.OriginalTableName))
+			if this.migrationContext.GetGhostDatabaseName() != this.migrationContext.DatabaseName {
+				return this.migrationContext.Log.Errorf("Found triggers on %s.%s, but --include-triggers is not supported when ghost database %s differs from original database %s. Bailing out",
+					sql.EscapeName(this.migrationContext.DatabaseName),
+					sql.EscapeName(this.migrationContext.OriginalTableName),
+					sql.EscapeName(this.migrationContext.GetGhostDatabaseName()),
+					sql.EscapeName(this.migrationContext.DatabaseName),
+				)
+			}
 			this.migrationContext.Triggers, err = mysql.GetTriggers(this.db, this.migrationContext.DatabaseName, this.migrationContext.OriginalTableName)
 			if err != nil {
 				return err
@@ -605,7 +661,7 @@ func (this *Inspector) validateGhostTriggersDontExist() error {
 				return nil
 			},
 				triggerName,
-				this.migrationContext.DatabaseName,
+				this.migrationContext.GetGhostDatabaseName(),
 			)
 			if err != nil {
 				return err

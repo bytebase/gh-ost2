@@ -112,6 +112,8 @@ type MigrationContext struct {
 	// MaxAuthFailures is the maximum number of authentication failures before aborting
 	// This prevents retry storms that can trigger firewall rules
 	MaxAuthFailures int
+	// AuthFailureCount tracks consecutive auth failures across recreated binlog readers.
+	AuthFailureCount int
 
 	// SkipPortValidation allows skipping the port validation in `ValidateConnection`
 	// This is useful when connecting to a MySQL instance where the external port

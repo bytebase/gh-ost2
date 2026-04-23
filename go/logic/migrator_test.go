@@ -881,7 +881,7 @@ func (suite *MigratorTestSuite) TestCutOverLossDataCaseLockGhostBeforeRename() {
 	go func() {
 		holdConn, err := suite.db.Conn(ctx)
 		suite.Require().NoError(err)
-		_, err = holdConn.ExecContext(ctx, "SELECT *, sleep(2) FROM test._testing_gho WHERE id = 1")
+		_, err = holdConn.ExecContext(ctx, "SELECT *, sleep(2) FROM "+getTestGhostTableName()+" WHERE id = 1")
 		suite.Require().NoError(err)
 	}()
 
@@ -898,7 +898,7 @@ func (suite *MigratorTestSuite) TestCutOverLossDataCaseLockGhostBeforeRename() {
 	// Verify the new column was added
 	var delValue, OriginalValue int64
 	err = suite.db.QueryRow(
-		fmt.Sprintf("select count(*) from %s._%s_del", testMysqlDatabase, testMysqlTableName),
+		fmt.Sprintf("select count(*) from %s", getTestOldTableName()),
 	).Scan(&delValue)
 	suite.Require().NoError(err)
 
@@ -1036,7 +1036,7 @@ func (suite *MigratorTestSuite) TestRevert() {
 
 	// checksum original and reverted table
 	var _tableName, checksum1, checksum2 string
-	rows, err := suite.db.Query(fmt.Sprintf("CHECKSUM TABLE %s, %s", testMysqlTableName, oldTableName))
+	rows, err := suite.db.Query(fmt.Sprintf("CHECKSUM TABLE %s, %s", sql.EscapeName(testMysqlTableName), sql.EscapeName(oldTableName)))
 	suite.Require().NoError(err)
 	defer rows.Close()
 	suite.Require().True(rows.Next())
@@ -1267,7 +1267,7 @@ func TestRetryExhaustion_TriggersAbort(t *testing.T) {
 func TestRevert_AbortsOnError(t *testing.T) {
 	migrationContext := base.NewMigrationContext()
 	migrationContext.Revert = true
-	migrationContext.OldTableName = "_test_del"
+	migrationContext.OldTableName = "~test_del"
 	migrationContext.OriginalTableName = "test"
 	migrationContext.DatabaseName = "testdb"
 	migrator := NewMigrator(migrationContext, "1.0.0")

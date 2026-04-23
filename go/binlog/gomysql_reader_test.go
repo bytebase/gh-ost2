@@ -129,6 +129,7 @@ func TestAuthFailureCircuitBreaker(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			migrationContext := base.NewMigrationContext()
 			migrationContext.MaxAuthFailures = tt.maxAuthFailures
+			migrationContext.AuthFailureCount = tt.authFailures - 1
 
 			connectionConfig := &mysql.ConnectionConfig{
 				Key: mysql.InstanceKey{
@@ -142,27 +143,40 @@ func TestAuthFailureCircuitBreaker(t *testing.T) {
 			reader := &GoMySQLReader{
 				migrationContext: migrationContext,
 				connectionConfig: connectionConfig,
-				authFailureCount: tt.authFailures - 1, // Simulate previous failures
 			}
 
-			// Simulate an authentication error
 			authErr := errors.New("ERROR 1045 (28000): Access denied for user")
+			err := reader.handleAuthError(authErr, "test")
 
-			// Check if circuit breaker triggers
-			if reader.isAuthenticationError(authErr) {
-				reader.authFailureCount++
-				if reader.migrationContext.MaxAuthFailures > 0 && reader.authFailureCount >= reader.migrationContext.MaxAuthFailures {
-					if !tt.expectError {
-						t.Errorf("Expected no error but circuit breaker triggered at %d failures", reader.authFailureCount)
-					}
-				} else {
-					if tt.expectError {
-						t.Errorf("Expected circuit breaker to trigger at %d failures but it didn't", reader.authFailureCount)
-					}
-				}
+			if tt.expectError {
+				require.ErrorIs(t, err, ErrMaxAuthFailures)
+			} else {
+				require.Error(t, err)
+				require.NotErrorIs(t, err, ErrMaxAuthFailures)
 			}
 		})
 	}
+}
+
+func TestHandleAuthErrorPersistsFailuresAcrossReaders(t *testing.T) {
+	migrationContext := base.NewMigrationContext()
+	migrationContext.MaxAuthFailures = 2
+	authErr := errors.New("ERROR 1045 (28000): Access denied for user")
+
+	reader1 := &GoMySQLReader{
+		migrationContext: migrationContext,
+	}
+	err := reader1.handleAuthError(authErr, "connection")
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "aborting to prevent firewall blocking")
+
+	reader2 := &GoMySQLReader{
+		migrationContext: migrationContext,
+	}
+	err = reader2.handleAuthError(authErr, "connection")
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrMaxAuthFailures)
+	require.Contains(t, err.Error(), "aborting to prevent firewall blocking")
 }
 
 func TestAuthFailureCounterIncrement(t *testing.T) {
@@ -171,7 +185,6 @@ func TestAuthFailureCounterIncrement(t *testing.T) {
 
 	reader := &GoMySQLReader{
 		migrationContext: migrationContext,
-		authFailureCount: 0,
 	}
 
 	// Test that counter increments only for auth errors
@@ -189,7 +202,7 @@ func TestAuthFailureCounterIncrement(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		initialCount := reader.authFailureCount
+		initialCount := migrationContext.AuthFailureCount
 
 		// For nil errors, handleAuthError would reset the counter
 		// So we test isAuthenticationError directly for nil
@@ -204,21 +217,21 @@ func TestAuthFailureCounterIncrement(t *testing.T) {
 		reader.handleAuthError(tc.err, "test")
 
 		if tc.shouldCount {
-			if reader.authFailureCount != initialCount+1 {
+			if migrationContext.AuthFailureCount != initialCount+1 {
 				t.Errorf("%s: Counter did not increment for auth error: %v", tc.description, tc.err)
 			}
 		} else {
-			if reader.authFailureCount != initialCount {
+			if migrationContext.AuthFailureCount != initialCount {
 				t.Errorf("%s: Counter incorrectly incremented for non-auth error: %v", tc.description, tc.err)
 			}
 		}
 	}
 
 	// Test that successful operation resets counter
-	reader.authFailureCount = 5
+	migrationContext.AuthFailureCount = 5
 	reader.handleAuthError(nil, "test success")
-	if reader.authFailureCount != 0 {
-		t.Errorf("Counter not reset on success, got %d", reader.authFailureCount)
+	if migrationContext.AuthFailureCount != 0 {
+		t.Errorf("Counter not reset on success, got %d", migrationContext.AuthFailureCount)
 	}
 }
 
@@ -228,38 +241,37 @@ func TestAuthFailureCounterReset(t *testing.T) {
 
 	reader := &GoMySQLReader{
 		migrationContext: migrationContext,
-		authFailureCount: 0,
 	}
 
 	// Simulate auth failures
 	authError := errors.New("ERROR 1045: Access denied")
 	for i := 0; i < 3; i++ {
 		if reader.isAuthenticationError(authError) {
-			reader.authFailureCount++
+			migrationContext.AuthFailureCount++
 		}
 	}
 
-	if reader.authFailureCount != 3 {
-		t.Errorf("Expected auth failure count 3, got %d", reader.authFailureCount)
+	if migrationContext.AuthFailureCount != 3 {
+		t.Errorf("Expected auth failure count 3, got %d", migrationContext.AuthFailureCount)
 	}
 
 	// Simulate successful connection - should reset counter
 	// In real code, this happens in ConnectBinlogStreamer on success
-	reader.authFailureCount = 0
+	migrationContext.AuthFailureCount = 0
 
-	if reader.authFailureCount != 0 {
-		t.Errorf("Expected auth failure count to be reset to 0, got %d", reader.authFailureCount)
+	if migrationContext.AuthFailureCount != 0 {
+		t.Errorf("Expected auth failure count to be reset to 0, got %d", migrationContext.AuthFailureCount)
 	}
 
 	// Simulate more failures after reset
 	for i := 0; i < 2; i++ {
 		if reader.isAuthenticationError(authError) {
-			reader.authFailureCount++
+			migrationContext.AuthFailureCount++
 		}
 	}
 
-	if reader.authFailureCount != 2 {
-		t.Errorf("Expected auth failure count 2 after reset, got %d", reader.authFailureCount)
+	if migrationContext.AuthFailureCount != 2 {
+		t.Errorf("Expected auth failure count 2 after reset, got %d", migrationContext.AuthFailureCount)
 	}
 }
 
@@ -275,7 +287,6 @@ func TestAuthFailureRecoveryScenario(t *testing.T) {
 
 	reader := &GoMySQLReader{
 		migrationContext: migrationContext,
-		authFailureCount: 0,
 	}
 
 	authError := errors.New("ERROR 1045: Access denied")
@@ -283,31 +294,31 @@ func TestAuthFailureRecoveryScenario(t *testing.T) {
 	// First round: 3 failures
 	for i := 0; i < 3; i++ {
 		if reader.isAuthenticationError(authError) {
-			reader.authFailureCount++
+			migrationContext.AuthFailureCount++
 		}
 	}
-	require.Equal(t, 3, reader.authFailureCount, "Should have 3 failures")
+	require.Equal(t, 3, migrationContext.AuthFailureCount, "Should have 3 failures")
 
 	// Successful connection - reset
-	reader.authFailureCount = 0
-	require.Equal(t, 0, reader.authFailureCount, "Should reset to 0 after success")
+	migrationContext.AuthFailureCount = 0
+	require.Equal(t, 0, migrationContext.AuthFailureCount, "Should reset to 0 after success")
 
 	// Second round: 4 more failures (under limit)
 	for i := 0; i < 4; i++ {
 		if reader.isAuthenticationError(authError) {
-			reader.authFailureCount++
+			migrationContext.AuthFailureCount++
 		}
 	}
-	require.Equal(t, 4, reader.authFailureCount, "Should have 4 failures after reset")
+	require.Equal(t, 4, migrationContext.AuthFailureCount, "Should have 4 failures after reset")
 
 	// Circuit breaker should not trigger yet (4 < 5)
 	shouldTrigger := reader.migrationContext.MaxAuthFailures > 0 &&
-		reader.authFailureCount >= reader.migrationContext.MaxAuthFailures
+		migrationContext.AuthFailureCount >= reader.migrationContext.MaxAuthFailures
 	require.False(t, shouldTrigger, "Circuit breaker should not trigger at 4 failures with limit 5")
 
 	// One more failure should trigger
-	reader.authFailureCount++
+	migrationContext.AuthFailureCount++
 	shouldTrigger = reader.migrationContext.MaxAuthFailures > 0 &&
-		reader.authFailureCount >= reader.migrationContext.MaxAuthFailures
+		migrationContext.AuthFailureCount >= reader.migrationContext.MaxAuthFailures
 	require.True(t, shouldTrigger, "Circuit breaker should trigger at 5 failures with limit 5")
 }

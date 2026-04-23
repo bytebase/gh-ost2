@@ -7,6 +7,7 @@ package logic
 
 import (
 	gosql "database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -202,6 +203,9 @@ func (this *EventsStreamer) StreamEvents(canStopStreaming func() bool) error {
 			if canStopStreaming() {
 				return nil
 			}
+			if errors.Is(err, binlog.ErrMaxAuthFailures) {
+				return err
+			}
 
 			this.migrationContext.Log.Infof("StreamEvents encountered unexpected error: %+v", err)
 			this.migrationContext.MarkPointOfInterest()
@@ -234,13 +238,18 @@ func (this *EventsStreamer) StreamEvents(canStopStreaming func() bool) error {
 }
 
 func (this *EventsStreamer) Close() (err error) {
-	err = this.binlogReader.Close()
+	if this.binlogReader != nil {
+		err = this.binlogReader.Close()
+	}
 	this.migrationContext.Log.Infof("Closed streamer connection. err=%+v", err)
 	return err
 }
 
 func (this *EventsStreamer) Teardown() {
-	err := this.binlogReader.Close()
-	this.migrationContext.Log.Infof("Closed streamer connection. err=%+v", err)
-	this.db.Close()
+	if err := this.Close(); err != nil {
+		this.migrationContext.Log.Errore(err)
+	}
+	if this.db != nil {
+		this.db.Close()
+	}
 }

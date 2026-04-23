@@ -6,6 +6,7 @@
 package binlog
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -13,7 +14,6 @@ import (
 	"github.com/github/gh-ost/go/base"
 	"github.com/github/gh-ost/go/mysql"
 	"github.com/github/gh-ost/go/sql"
-	"github.com/pkg/errors"
 
 	"time"
 
@@ -32,9 +32,11 @@ type GoMySQLReader struct {
 	currentCoordinatesMutex *sync.Mutex
 	// LastTrxCoords are the coordinates of the last transaction completely read.
 	// If using the file coordinates it is binlog position of the transaction's XID event.
-	LastTrxCoords    mysql.BinlogCoordinates
-	authFailureCount int
+	LastTrxCoords mysql.BinlogCoordinates
 }
+
+// ErrMaxAuthFailures marks authentication failures that crossed the configured limit.
+var ErrMaxAuthFailures = errors.New("max authentication failures reached")
 
 func NewGoMySQLReader(migrationContext *base.MigrationContext) *GoMySQLReader {
 	connectionConfig := migrationContext.InspectorConnectionConfig
@@ -61,9 +63,9 @@ func NewGoMySQLReader(migrationContext *base.MigrationContext) *GoMySQLReader {
 func (this *GoMySQLReader) handleAuthError(err error, context string) error {
 	if err == nil {
 		// Success case - reset counter if needed
-		if this.authFailureCount > 0 {
-			this.migrationContext.Log.Infof("%s successful, resetting auth failure count from %d to 0", context, this.authFailureCount)
-			this.authFailureCount = 0
+		if this.migrationContext.AuthFailureCount > 0 {
+			this.migrationContext.Log.Infof("%s successful, resetting auth failure count from %d to 0", context, this.migrationContext.AuthFailureCount)
+			this.migrationContext.AuthFailureCount = 0
 		}
 		return nil
 	}
@@ -74,15 +76,15 @@ func (this *GoMySQLReader) handleAuthError(err error, context string) error {
 	}
 
 	// Authentication error - increment counter and check circuit breaker
-	this.authFailureCount++
+	this.migrationContext.AuthFailureCount++
 
-	if this.migrationContext.MaxAuthFailures > 0 && this.authFailureCount >= this.migrationContext.MaxAuthFailures {
-		return fmt.Errorf("authentication failed %d times (max: %d) during %s, aborting to prevent firewall blocking: %w",
-			this.authFailureCount, this.migrationContext.MaxAuthFailures, context, err)
+	if this.migrationContext.MaxAuthFailures > 0 && this.migrationContext.AuthFailureCount >= this.migrationContext.MaxAuthFailures {
+		return fmt.Errorf("%w: authentication failed %d times (max: %d) during %s, aborting to prevent firewall blocking: %w",
+			ErrMaxAuthFailures, this.migrationContext.AuthFailureCount, this.migrationContext.MaxAuthFailures, context, err)
 	}
 
 	this.migrationContext.Log.Errorf("Authentication failure #%d during %s (max: %d): %v",
-		this.authFailureCount, context, this.migrationContext.MaxAuthFailures, err)
+		this.migrationContext.AuthFailureCount, context, this.migrationContext.MaxAuthFailures, err)
 
 	return err
 }
