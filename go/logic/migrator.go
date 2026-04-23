@@ -909,9 +909,19 @@ func (this *Migrator) cutOverTwoStep() (err error) {
 	defer atomic.StoreInt64(&this.migrationContext.InCutOverCriticalSectionFlag, 0)
 	atomic.StoreInt64(&this.migrationContext.AllEventsUpToLockProcessedInjectedFlag, 0)
 
+	tableLocked := false
+	defer func() {
+		if tableLocked && err != nil {
+			if unlockErr := this.applier.UnlockTables(); unlockErr != nil {
+				this.migrationContext.Log.Errore(unlockErr)
+			}
+		}
+	}()
+
 	if err := this.retryOperation(this.applier.LockOriginalTable); err != nil {
 		return err
 	}
+	tableLocked = true
 
 	if err := this.retryOperation(this.waitForEventsUpToLock); err != nil {
 		return err
@@ -928,6 +938,7 @@ func (this *Migrator) cutOverTwoStep() (err error) {
 	if err := this.retryOperation(this.applier.UnlockTables); err != nil {
 		return err
 	}
+	tableLocked = false
 
 	lockAndRenameDuration := this.migrationContext.RenameTablesEndTime.Sub(this.migrationContext.LockTablesStartTime)
 	renameDuration := this.migrationContext.RenameTablesEndTime.Sub(this.migrationContext.RenameTablesStartTime)

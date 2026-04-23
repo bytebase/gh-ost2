@@ -8,7 +8,7 @@ touch $postpone_flag_file
 
 # Set table names (required by build_ghost_command)
 table_name="gh_ost_test"
-ghost_table_name="_gh_ost_test_gho"
+ghost_table_name="\`~gh_ost_test_gho\`"
 
 # Build gh-ost command using framework function
 build_ghost_command

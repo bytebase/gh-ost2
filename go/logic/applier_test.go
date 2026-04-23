@@ -649,7 +649,7 @@ func (suite *ApplierTestSuite) TestPanicOnWarningsInApplyIterationInsertQuerySuc
 	suite.Require().NoError(err)
 	suite.Require().Equal(int64(0), rowsAffected)
 
-	// Ensure Duplicate entry '42' for key '_testing_gho.item_id' is ignored correctly
+	// Ensure Duplicate entry '42' for key '~testing_gho.item_id' is ignored correctly
 	suite.Require().Empty(applier.migrationContext.MigrationLastInsertSQLWarnings)
 
 	// Check that the row was inserted
@@ -819,6 +819,217 @@ func (suite *ApplierTestSuite) TestWriteCheckpoint() {
 	suite.Require().Equal(chk.RowsCopied, gotChk.RowsCopied)
 	suite.Require().Equal(chk.DMLApplied, gotChk.DMLApplied)
 	suite.Require().Equal(chk.IsCutover, gotChk.IsCutover)
+}
+
+func (suite *ApplierTestSuite) TestDropCheckpointTableUsesOriginalDatabase() {
+	ctx := context.Background()
+
+	_, err := suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT);", getTestTableName()))
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, "CREATE TABLE test.`~testing_ghk` (id INT);")
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, "CREATE TABLE bbdataarchive.`~testing_ghk` (id INT);")
+	suite.Require().NoError(err)
+
+	connectionConfig, err := getTestConnectionConfig(ctx, suite.mysqlContainer)
+	suite.Require().NoError(err)
+
+	migrationContext := newTestMigrationContext()
+	migrationContext.ApplierConnectionConfig = connectionConfig
+	migrationContext.GhostDatabaseName = "bbdataarchive"
+	migrationContext.SetConnectionConfig("innodb")
+
+	applier := NewApplier(migrationContext)
+	defer applier.Teardown()
+
+	err = applier.InitDBConnections()
+	suite.Require().NoError(err)
+
+	err = applier.DropCheckpointTable()
+	suite.Require().NoError(err)
+
+	var tableName string
+	//nolint:execinquery
+	err = suite.db.QueryRow("SHOW TABLES IN test LIKE '~testing_ghk'").Scan(&tableName)
+	suite.Require().ErrorIs(err, gosql.ErrNoRows)
+
+	//nolint:execinquery
+	err = suite.db.QueryRow("SHOW TABLES IN bbdataarchive LIKE '~testing_ghk'").Scan(&tableName)
+	suite.Require().NoError(err)
+	suite.Require().Equal("~testing_ghk", tableName)
+}
+
+func (suite *ApplierTestSuite) TestCreateAndDropTriggersUsesGhostDatabase() {
+	ctx := context.Background()
+
+	_, err := suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT PRIMARY KEY, item_id INT);", getTestTableName()))
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, "CREATE TABLE bbdataarchive.`~testing_gho` (id INT PRIMARY KEY, item_id INT);")
+	suite.Require().NoError(err)
+
+	connectionConfig, err := getTestConnectionConfig(ctx, suite.mysqlContainer)
+	suite.Require().NoError(err)
+
+	migrationContext := newTestMigrationContext()
+	migrationContext.ApplierConnectionConfig = connectionConfig
+	migrationContext.GhostDatabaseName = "bbdataarchive"
+	migrationContext.SetConnectionConfig("innodb")
+	migrationContext.Triggers = []mysql.Trigger{{
+		Name:      "testing_ai",
+		Event:     "INSERT",
+		Timing:    "AFTER",
+		Statement: "SET @ghost_trigger_seen = NEW.id",
+	}}
+
+	applier := NewApplier(migrationContext)
+	defer applier.Teardown()
+
+	err = applier.InitDBConnections()
+	suite.Require().NoError(err)
+
+	err = applier.CreateTriggersOnGhost()
+	suite.Require().NoError(err)
+
+	var triggerName string
+	err = suite.db.QueryRow("SELECT trigger_name FROM information_schema.triggers WHERE trigger_schema = 'bbdataarchive' AND trigger_name = 'testing_ai'").Scan(&triggerName)
+	suite.Require().NoError(err)
+	suite.Require().Equal("testing_ai", triggerName)
+
+	err = applier.DropTriggersFromGhost()
+	suite.Require().NoError(err)
+
+	err = suite.db.QueryRow("SELECT trigger_name FROM information_schema.triggers WHERE trigger_schema = 'bbdataarchive' AND trigger_name = 'testing_ai'").Scan(&triggerName)
+	suite.Require().ErrorIs(err, gosql.ErrNoRows)
+}
+
+func (suite *ApplierTestSuite) TestValidateGhostTriggersDontExistUsesGhostDatabase() {
+	ctx := context.Background()
+
+	_, err := suite.db.ExecContext(ctx, "CREATE TABLE bbdataarchive.`~testing_gho` (id INT PRIMARY KEY, item_id INT);")
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, "CREATE TRIGGER bbdataarchive.testing_ai AFTER INSERT ON bbdataarchive.`~testing_gho` FOR EACH ROW SET @ghost_trigger_seen = NEW.id")
+	suite.Require().NoError(err)
+
+	migrationContext := newTestMigrationContext()
+	migrationContext.GhostDatabaseName = "bbdataarchive"
+	migrationContext.Triggers = []mysql.Trigger{{
+		Name: "testing_ai",
+	}}
+
+	inspector := &Inspector{
+		db:               suite.db,
+		migrationContext: migrationContext,
+	}
+
+	err = inspector.validateGhostTriggersDontExist()
+	suite.Require().Error(err)
+	suite.Require().Contains(err.Error(), "testing_ai")
+}
+
+func (suite *ApplierTestSuite) TestValidateTableTriggersRejectsSeparateGhostDatabase() {
+	ctx := context.Background()
+
+	_, err := suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT PRIMARY KEY, item_id INT);", getTestTableName()))
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, "CREATE TRIGGER test.testing_ai AFTER INSERT ON test.testing FOR EACH ROW SET @original_trigger_seen = NEW.id")
+	suite.Require().NoError(err)
+
+	migrationContext := newTestMigrationContext()
+	migrationContext.IncludeTriggers = true
+	migrationContext.TriggerSuffix = "_gho"
+	migrationContext.GhostDatabaseName = "bbdataarchive"
+
+	inspector := &Inspector{
+		db:               suite.db,
+		migrationContext: migrationContext,
+	}
+
+	err = inspector.validateTableTriggers()
+	suite.Require().Error(err)
+	suite.Require().Contains(err.Error(), "include-triggers")
+	suite.Require().Contains(err.Error(), "bbdataarchive")
+}
+
+func (suite *ApplierTestSuite) TestValidateGrantsRequiresGhostDatabasePrivileges() {
+	ctx := context.Background()
+
+	_, err := suite.db.ExecContext(ctx, "DROP USER IF EXISTS 'ghost_grants'@'%'")
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, "CREATE USER 'ghost_grants'@'%' IDENTIFIED BY 'ghost-grants-password'")
+	suite.Require().NoError(err)
+	defer suite.db.ExecContext(ctx, "DROP USER IF EXISTS 'ghost_grants'@'%'") //nolint:errcheck
+
+	_, err = suite.db.ExecContext(ctx, "GRANT REPLICATION CLIENT, REPLICATION SLAVE ON *.* TO 'ghost_grants'@'%'")
+	suite.Require().NoError(err)
+	_, err = suite.db.ExecContext(ctx, "GRANT ALL PRIVILEGES ON test.* TO 'ghost_grants'@'%'")
+	suite.Require().NoError(err)
+
+	connectionConfig, err := getTestConnectionConfig(ctx, suite.mysqlContainer)
+	suite.Require().NoError(err)
+	connectionConfig.User = "ghost_grants"
+	connectionConfig.Password = "ghost-grants-password"
+
+	limitedDB, err := gosql.Open("mysql", connectionConfig.GetDBUri(testMysqlDatabase))
+	suite.Require().NoError(err)
+	defer limitedDB.Close()
+
+	migrationContext := newTestMigrationContext()
+	migrationContext.GhostDatabaseName = "bbdataarchive"
+
+	inspector := &Inspector{
+		db:               limitedDB,
+		migrationContext: migrationContext,
+	}
+
+	err = inspector.validateGrants()
+	suite.Require().Error(err)
+	suite.Require().Contains(err.Error(), "bbdataarchive")
+}
+
+func (suite *ApplierTestSuite) TestCutOverTwoStepUnlocksTableAfterPostLockError() {
+	ctx := context.Background()
+
+	_, err := suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT PRIMARY KEY);", getTestTableName()))
+	suite.Require().NoError(err)
+
+	connectionConfig, err := getTestConnectionConfig(ctx, suite.mysqlContainer)
+	suite.Require().NoError(err)
+
+	migrationContext := newTestMigrationContext()
+	migrationContext.ApplierConnectionConfig = connectionConfig
+	migrationContext.SetConnectionConfig("innodb")
+	migrationContext.CutOverLockTimeoutSeconds = 1
+	migrationContext.SetDefaultNumRetries(1)
+
+	applier := NewApplier(migrationContext)
+	defer applier.Teardown()
+
+	err = applier.InitDBConnections()
+	suite.Require().NoError(err)
+
+	err = applier.CreateChangelogTable()
+	suite.Require().NoError(err)
+	defer suite.db.ExecContext(ctx, "DROP TABLE IF EXISTS test.`~testing_ghc`") //nolint:errcheck
+
+	migrator := NewMigrator(migrationContext, "0.0.0")
+	migrator.applier = applier
+	go migrator.listenOnPanicAbort()
+
+	err = migrator.cutOverTwoStep()
+	suite.Require().Error(err)
+	suite.Require().Contains(err.Error(), "Timeout while waiting for events up to lock")
+
+	_, err = suite.db.ExecContext(ctx, "SET SESSION lock_wait_timeout = 1")
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, "INSERT INTO test.testing (id) VALUES (1)")
+	suite.Require().NoError(err)
 }
 
 func (suite *ApplierTestSuite) TestPanicOnWarningsWithDuplicateKeyOnNonMigrationIndex() {

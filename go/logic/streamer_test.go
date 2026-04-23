@@ -64,6 +64,16 @@ func (suite *EventsStreamerTestSuite) TearDownTest() {
 	suite.Require().NoError(err)
 }
 
+func TestEventsStreamerCloseAndTeardownBeforeInit(t *testing.T) {
+	migrationContext := newTestMigrationContext()
+	streamer := NewEventsStreamer(migrationContext)
+
+	if err := streamer.Close(); err != nil {
+		t.Fatalf("Close before init returned error: %v", err)
+	}
+	streamer.Teardown()
+}
+
 func (suite *EventsStreamerTestSuite) TestStreamEvents() {
 	ctx := context.Background()
 

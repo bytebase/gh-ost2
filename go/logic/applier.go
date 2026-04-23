@@ -507,10 +507,7 @@ func (this *Applier) CreateCheckpointTable() error {
 }
 
 // dropTable drops a given table on the applied host
-func (this *Applier) dropTable(tableName string) error {
-	// Use the helper method to get database name with fallback
-	databaseName := this.migrationContext.GetGhostDatabaseName()
-
+func (this *Applier) dropTable(databaseName, tableName string) error {
 	query := fmt.Sprintf(`drop /* gh-ost */ table if exists %s.%s`,
 		sql.EscapeName(databaseName),
 		sql.EscapeName(tableName),
@@ -559,12 +556,15 @@ func (this *Applier) DropTriggersFromGhost() error {
 	if len(this.migrationContext.Triggers) > 0 {
 		for _, trigger := range this.migrationContext.Triggers {
 			triggerName := this.migrationContext.GetGhostTriggerName(trigger.Name)
-			query := fmt.Sprintf("drop trigger if exists %s", sql.EscapeName(triggerName))
+			query := fmt.Sprintf("drop trigger if exists %s.%s",
+				sql.EscapeName(this.migrationContext.GetGhostDatabaseName()),
+				sql.EscapeName(triggerName),
+			)
 			_, err := sqlutils.ExecNoPrepare(this.db, query)
 			if err != nil {
 				return err
 			}
-			this.migrationContext.Log.Infof("Trigger '%s' dropped", triggerName)
+			this.migrationContext.Log.Infof("Trigger '%s.%s' dropped", this.migrationContext.GetGhostDatabaseName(), triggerName)
 		}
 	}
 	return nil
@@ -577,16 +577,16 @@ func (this *Applier) createTriggers(tableName string) error {
 			triggerName := this.migrationContext.GetGhostTriggerName(trigger.Name)
 			query := fmt.Sprintf(`create /* gh-ost */ trigger %s %s %s on %s.%s for each row
 		%s`,
-				sql.EscapeName(triggerName),
+				fmt.Sprintf("%s.%s", sql.EscapeName(this.migrationContext.GetGhostDatabaseName()), sql.EscapeName(triggerName)),
 				trigger.Timing,
 				trigger.Event,
-				sql.EscapeName(this.migrationContext.DatabaseName),
+				sql.EscapeName(this.migrationContext.GetGhostDatabaseName()),
 				sql.EscapeName(tableName),
 				trigger.Statement,
 			)
 			this.migrationContext.Log.Infof("Createing trigger %s on %s.%s",
 				sql.EscapeName(triggerName),
-				sql.EscapeName(this.migrationContext.DatabaseName),
+				sql.EscapeName(this.migrationContext.GetGhostDatabaseName()),
 				sql.EscapeName(tableName),
 			)
 			if _, err := sqlutils.ExecNoPrepare(this.db, query); err != nil {
@@ -606,22 +606,22 @@ func (this *Applier) CreateTriggersOnGhost() error {
 
 // DropChangelogTable drops the changelog table on the applier host
 func (this *Applier) DropChangelogTable() error {
-	return this.dropTable(this.migrationContext.GetChangelogTableName())
+	return this.dropTable(this.migrationContext.GetGhostDatabaseName(), this.migrationContext.GetChangelogTableName())
 }
 
 // DropCheckpointTable drops the checkpoint table on applier host
 func (this *Applier) DropCheckpointTable() error {
-	return this.dropTable(this.migrationContext.GetCheckpointTableName())
+	return this.dropTable(this.migrationContext.DatabaseName, this.migrationContext.GetCheckpointTableName())
 }
 
 // DropOldTable drops the _Old table on the applier host
 func (this *Applier) DropOldTable() error {
-	return this.dropTable(this.migrationContext.GetOldTableName())
+	return this.dropTable(this.migrationContext.GetGhostDatabaseName(), this.migrationContext.GetOldTableName())
 }
 
 // DropGhostTable drops the ghost table on the applier host
 func (this *Applier) DropGhostTable() error {
-	return this.dropTable(this.migrationContext.GetGhostTableName())
+	return this.dropTable(this.migrationContext.GetGhostDatabaseName(), this.migrationContext.GetGhostTableName())
 }
 
 // WriteChangelog writes a value to the changelog table.
@@ -1253,7 +1253,7 @@ func (this *Applier) DropAtomicCutOverSentryTableIfExists() error {
 		return fmt.Errorf("Expected magic comment on %s, did not find it", tableName)
 	}
 	this.migrationContext.Log.Infof("Dropping magic cut-over table")
-	return this.dropTable(tableName)
+	return this.dropTable(this.migrationContext.GetGhostDatabaseName(), tableName)
 }
 
 // CreateAtomicCutOverSentryTable
