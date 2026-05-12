@@ -55,6 +55,7 @@ func NewGoMySQLReader(migrationContext *base.MigrationContext) *GoMySQLReader {
 			UseDecimal:              true,
 			TimestampStringLocation: time.UTC,
 			MaxReconnectAttempts:    migrationContext.BinlogSyncerMaxReconnectAttempts,
+			Dialer:                  connectionConfig.Dialer,
 		}),
 	}
 }

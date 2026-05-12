@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 
+	gomysqlclient "github.com/go-mysql-org/go-mysql/client"
 	"github.com/go-sql-driver/mysql"
 )
 
@@ -33,6 +34,8 @@ type ConnectionConfig struct {
 	Charset              string
 	// Network is the go-sql-driver network name. When empty, tcp is used.
 	Network string
+	// Dialer is used by go-mysql binlog connections. When nil, go-mysql uses net.Dialer.
+	Dialer gomysqlclient.Dialer
 
 	// use migrationContext.Uuid if useSSL
 	TLSKey string
@@ -57,6 +60,7 @@ func (this *ConnectionConfig) DuplicateCredentials(key InstanceKey) *ConnectionC
 		TransactionIsolation: this.TransactionIsolation,
 		Charset:              this.Charset,
 		Network:              this.Network,
+		Dialer:               this.Dialer,
 		TLSKey:               this.TLSKey,
 	}
 

@@ -6,9 +6,13 @@
 package mysql
 
 import (
+	"context"
 	"crypto/tls"
+	"errors"
+	"net"
 	"testing"
 
+	gomysqlclient "github.com/go-mysql-org/go-mysql/client"
 	"github.com/openark/golib/log"
 	"github.com/stretchr/testify/require"
 )
@@ -34,6 +38,7 @@ func TestNewConnectionConfig(t *testing.T) {
 }
 
 func TestDuplicateCredentials(t *testing.T) {
+	dialerErr := errors.New("dialer called")
 	c := NewConnectionConfig()
 	c.Key = InstanceKey{Hostname: "myhost", Port: 3306}
 	c.User = "gromit"
@@ -45,6 +50,9 @@ func TestDuplicateCredentials(t *testing.T) {
 	c.TransactionIsolation = transactionIsolation
 	c.Charset = "utf8mb4"
 	c.Network = "mysql-tcp-12345678"
+	c.Dialer = func(context.Context, string, string) (net.Conn, error) {
+		return nil, dialerErr
+	}
 
 	dup := c.DuplicateCredentials(InstanceKey{Hostname: "otherhost", Port: 3310})
 	require.Equal(t, "otherhost", dup.Key.Hostname)
@@ -60,6 +68,8 @@ func TestDuplicateCredentials(t *testing.T) {
 	require.Equal(t, c.TransactionIsolation, dup.TransactionIsolation)
 	require.Equal(t, c.Charset, dup.Charset)
 	require.Equal(t, c.Network, dup.Network)
+	_, err := dup.Dialer(context.Background(), "tcp", "otherhost:3310")
+	require.ErrorIs(t, err, dialerErr)
 }
 
 func TestDuplicate(t *testing.T) {
@@ -82,6 +92,12 @@ func TestDuplicate(t *testing.T) {
 	require.Equal(t, transactionIsolation, dup.TransactionIsolation)
 	require.Equal(t, "utf8mb4", dup.Charset)
 	require.Equal(t, c.Network, dup.Network)
+}
+
+func TestNewConnectionConfigHasNoCustomDialer(t *testing.T) {
+	c := NewConnectionConfig()
+	var dialer gomysqlclient.Dialer = c.Dialer
+	require.Nil(t, dialer)
 }
 
 func TestGetDBUri(t *testing.T) {
