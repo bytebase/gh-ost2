@@ -31,6 +31,8 @@ type ConnectionConfig struct {
 	Timeout              float64
 	TransactionIsolation string
 	Charset              string
+	// Network is the go-sql-driver network name. When empty, tcp is used.
+	Network string
 
 	// use migrationContext.Uuid if useSSL
 	TLSKey string
@@ -54,6 +56,7 @@ func (this *ConnectionConfig) DuplicateCredentials(key InstanceKey) *ConnectionC
 		Timeout:              this.Timeout,
 		TransactionIsolation: this.TransactionIsolation,
 		Charset:              this.Charset,
+		Network:              this.Network,
 		TLSKey:               this.TLSKey,
 	}
 
@@ -168,7 +171,11 @@ func (this *ConnectionConfig) GetDBUri(databaseName string) string {
 		fmt.Sprintf("writeTimeout=%fs", this.Timeout),
 	}
 
-	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?%s", this.User, this.Password, hostname, this.Key.Port, databaseName, strings.Join(connectionParams, "&"))
+	network := this.Network
+	if network == "" {
+		network = "tcp"
+	}
+	return fmt.Sprintf("%s:%s@%s(%s:%d)/%s?%s", this.User, this.Password, network, hostname, this.Key.Port, databaseName, strings.Join(connectionParams, "&"))
 }
 
 func GetDBTLSConfigKey(tlsKey string, tlsServerName string) string {
