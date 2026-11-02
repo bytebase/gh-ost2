@@ -274,11 +274,20 @@ func (es *EventsStreamer) StreamEvents(canStopStreaming func() bool) error {
 }
 
 func (es *EventsStreamer) Close() (err error) {
-	err = es.binlogReader.Close()
+	if es.binlogReader != nil {
+		err = es.binlogReader.Close()
+	}
 	es.migrationContext.Log.Infof("Closed streamer connection. err=%+v", err)
 	return err
 }
 
+// Teardown closes the binlog reader as well as the database handle. Both can still be
+// nil here, since InitDBConnections may have failed before creating them.
 func (es *EventsStreamer) Teardown() {
-	es.db.Close()
+	if err := es.Close(); err != nil {
+		es.migrationContext.Log.Errore(err)
+	}
+	if es.db != nil {
+		es.db.Close()
+	}
 }

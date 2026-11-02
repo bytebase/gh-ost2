@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/github/gh-ost/go/binlog"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/mysql"
@@ -61,6 +62,15 @@ func (suite *EventsStreamerTestSuite) TearDownTest() {
 	suite.Require().NoError(err)
 	_, err = suite.db.ExecContext(ctx, "DROP TABLE IF EXISTS "+getTestGhostTableName())
 	suite.Require().NoError(err)
+}
+
+// Teardown runs on a streamer whose binlog reader and database handle were never
+// created, which is what happens when InitDBConnections fails early.
+func TestEventsStreamerCloseAndTeardownBeforeInit(t *testing.T) {
+	streamer := NewEventsStreamer(newTestMigrationContext())
+
+	require.NoError(t, streamer.Close())
+	streamer.Teardown()
 }
 
 func (suite *EventsStreamerTestSuite) TestStreamEvents() {
