@@ -1920,6 +1920,47 @@ func (suite *ApplierTestSuite) TestValidateGrantsRequiresGhostDatabasePrivileges
 	suite.Require().Contains(err.Error(), testMysqlGhostDatabase)
 }
 
+func (suite *ApplierTestSuite) TestCutOverTwoStepUnlocksTableAfterPostLockError() {
+	ctx := context.Background()
+
+	_, err := suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT PRIMARY KEY);", getTestTableName()))
+	suite.Require().NoError(err)
+
+	connectionConfig, err := getTestConnectionConfig(ctx, suite.mysqlContainer)
+	suite.Require().NoError(err)
+
+	migrationContext := newTestMigrationContext()
+	migrationContext.ApplierConnectionConfig = connectionConfig
+	migrationContext.SetConnectionConfig("innodb")
+	migrationContext.CutOverLockTimeoutSeconds = 1
+	migrationContext.SetDefaultNumRetries(1)
+
+	applier := NewApplier(migrationContext)
+	defer applier.Teardown()
+
+	err = applier.InitDBConnections()
+	suite.Require().NoError(err)
+
+	err = applier.CreateChangelogTable()
+	suite.Require().NoError(err)
+	defer suite.db.ExecContext(ctx, fmt.Sprintf("DROP TABLE IF EXISTS `%s`.`~testing_ghc`", testMysqlDatabase)) //nolint:errcheck
+
+	migrator := NewMigrator(migrationContext, "0.0.0")
+	migrator.applier = applier
+	go migrator.listenOnPanicAbort()
+
+	err = migrator.cutOverTwoStep()
+	suite.Require().Error(err)
+	suite.Require().Contains(err.Error(), "timeout while waiting for events up to lock")
+
+	// The original table must not be left write-locked by the failed cut-over.
+	_, err = suite.db.ExecContext(ctx, "SET SESSION lock_wait_timeout = 1")
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("INSERT INTO %s (id) VALUES (1)", getTestTableName()))
+	suite.Require().NoError(err)
+}
+
 func TestApplier(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping applier test suite in short mode")

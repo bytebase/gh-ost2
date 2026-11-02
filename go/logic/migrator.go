@@ -1015,12 +1015,24 @@ func (mgtr *Migrator) cutOverTwoStep() (err error) {
 	defer atomic.StoreInt64(&mgtr.migrationContext.InCutOverCriticalSectionFlag, 0)
 	atomic.StoreInt64(&mgtr.migrationContext.AllEventsUpToLockProcessedInjectedFlag, 0)
 
+	// Everything after LockOriginalTable holds a write lock on the original table. A
+	// failure there must release it, or the table stays unwritable until the process exits.
+	tableLocked := false
+	defer func() {
+		if tableLocked && err != nil {
+			if unlockErr := mgtr.applier.UnlockTables(); unlockErr != nil {
+				mgtr.migrationContext.Log.Errore(unlockErr)
+			}
+		}
+	}()
+
 	phaseStartTime := time.Now()
 	if err := mgtr.retryOperation(mgtr.applier.LockOriginalTable); err != nil {
 		metrics.RecordCutOverPhase(mgtr.migrationContext.Metrics, metrics.CutOverPhaseOriginalTableLock, time.Since(phaseStartTime), err)
 		return err
 	}
 	metrics.RecordCutOverPhase(mgtr.migrationContext.Metrics, metrics.CutOverPhaseOriginalTableLock, time.Since(phaseStartTime), nil)
+	tableLocked = true
 
 	if err := mgtr.retryOperation(mgtr.waitForEventsUpToLock); err != nil {
 		return err
@@ -1044,6 +1056,7 @@ func (mgtr *Migrator) cutOverTwoStep() (err error) {
 		return err
 	}
 	metrics.RecordCutOverPhase(mgtr.migrationContext.Metrics, metrics.CutOverPhaseUnlock, time.Since(phaseStartTime), nil)
+	tableLocked = false
 
 	lockAndRenameDuration := mgtr.migrationContext.RenameTablesEndTime.Sub(mgtr.migrationContext.LockTablesStartTime)
 	renameDuration := mgtr.migrationContext.RenameTablesEndTime.Sub(mgtr.migrationContext.RenameTablesStartTime)
