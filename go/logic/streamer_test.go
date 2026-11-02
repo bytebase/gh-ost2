@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"sync"
+
 	"github.com/github/gh-ost/go/binlog"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -96,8 +98,14 @@ func (suite *EventsStreamerTestSuite) TestStreamEvents() {
 
 	streamCtx, cancel := context.WithCancel(context.Background())
 
+	// dmlEventsMutex: the goroutine StreamEvents spawns to notify listeners
+	// outlives StreamEvents, so group.Wait() below does not order these appends
+	// against the assertion that reads them.
+	var dmlEventsMutex sync.Mutex
 	dmlEvents := make([]*binlog.BinlogDMLEvent, 0)
 	err = streamer.AddListener(false, testMysqlDatabase, testMysqlTableName, func(event *binlog.BinlogEntry) error {
+		dmlEventsMutex.Lock()
+		defer dmlEventsMutex.Unlock()
 		dmlEvents = append(dmlEvents, event.DmlEvent)
 
 		// Stop once we've collected three events
@@ -147,6 +155,8 @@ func (suite *EventsStreamerTestSuite) TestStreamEvents() {
 	err = group.Wait()
 	suite.Require().NoError(err)
 
+	dmlEventsMutex.Lock()
+	defer dmlEventsMutex.Unlock()
 	suite.Require().Len(dmlEvents, 3)
 }
 
@@ -172,8 +182,14 @@ func (suite *EventsStreamerTestSuite) TestStreamEventsAutomaticallyReconnects() 
 
 	streamCtx, cancel := context.WithCancel(context.Background())
 
+	// dmlEventsMutex: the goroutine StreamEvents spawns to notify listeners
+	// outlives StreamEvents, so group.Wait() below does not order these appends
+	// against the assertion that reads them.
+	var dmlEventsMutex sync.Mutex
 	dmlEvents := make([]*binlog.BinlogDMLEvent, 0)
 	err = streamer.AddListener(false, testMysqlDatabase, testMysqlTableName, func(event *binlog.BinlogEntry) error {
+		dmlEventsMutex.Lock()
+		defer dmlEventsMutex.Unlock()
 		dmlEvents = append(dmlEvents, event.DmlEvent)
 
 		// Stop once we've collected three events
@@ -266,6 +282,8 @@ func (suite *EventsStreamerTestSuite) TestStreamEventsAutomaticallyReconnects() 
 	err = group.Wait()
 	suite.Require().NoError(err)
 
+	dmlEventsMutex.Lock()
+	defer dmlEventsMutex.Unlock()
 	suite.Require().Len(dmlEvents, 3)
 }
 
