@@ -161,6 +161,7 @@ func TestBuildRangeComparison(t *testing.T) {
 func TestBuildRangeInsertQuery(t *testing.T) {
 	databaseName := "mydb"
 	originalTableName := "tbl"
+	ghostDatabaseName := "bbdataarchive"
 	ghostTableName := "ghost"
 	sharedColumns := []string{"id", "name", "position"}
 	{
@@ -171,12 +172,12 @@ func TestBuildRangeInsertQuery(t *testing.T) {
 		rangeStartArgs := []interface{}{3}
 		rangeEndArgs := []interface{}{103}
 
-		query, explodedArgs, err := BuildRangeInsertQuery(databaseName, originalTableName, ghostTableName, sharedColumns, sharedColumns, uniqueKey, uniqueKeyColumns, rangeStartValues, rangeEndValues, rangeStartArgs, rangeEndArgs, true, true, true)
+		query, explodedArgs, err := BuildRangeInsertQuery(databaseName, originalTableName, ghostDatabaseName, ghostTableName, sharedColumns, sharedColumns, uniqueKey, uniqueKeyColumns, rangeStartValues, rangeEndValues, rangeStartArgs, rangeEndArgs, true, true, true)
 		require.NoError(t, err)
 		expected := `
 			insert /* gh-ost mydb.tbl */ ignore
 			into
-				mydb.ghost
+				bbdataarchive.ghost
 				(id, name, position)
 			(
 				select id, name, position
@@ -200,11 +201,11 @@ func TestBuildRangeInsertQuery(t *testing.T) {
 		rangeStartArgs := []interface{}{3, 17}
 		rangeEndArgs := []interface{}{103, 117}
 
-		query, explodedArgs, err := BuildRangeInsertQuery(databaseName, originalTableName, ghostTableName, sharedColumns, sharedColumns, uniqueKey, uniqueKeyColumns, rangeStartValues, rangeEndValues, rangeStartArgs, rangeEndArgs, true, true, true)
+		query, explodedArgs, err := BuildRangeInsertQuery(databaseName, originalTableName, ghostDatabaseName, ghostTableName, sharedColumns, sharedColumns, uniqueKey, uniqueKeyColumns, rangeStartValues, rangeEndValues, rangeStartArgs, rangeEndArgs, true, true, true)
 		require.NoError(t, err)
 		expected := `
 			insert /* gh-ost mydb.tbl */ ignore
-			into mydb.ghost (id, name, position)
+			into bbdataarchive.ghost (id, name, position)
 			(select id, name, position from mydb.tbl force index (name_position_uidx) where name = @v1s and position >= @v2s for share nowait)
 			union all
 			(select id, name, position from mydb.tbl force index (name_position_uidx) where name > @v1s and name < @v1e for share nowait)
@@ -222,12 +223,12 @@ func TestBuildRangeInsertQuery(t *testing.T) {
 		rangeStartArgs := []interface{}{3, 17}
 		rangeEndArgs := []interface{}{3, 117}
 
-		query, explodedArgs, err := BuildRangeInsertQuery(databaseName, originalTableName, ghostTableName, sharedColumns, sharedColumns, uniqueKey, uniqueKeyColumns, rangeStartValues, rangeEndValues, rangeStartArgs, rangeEndArgs, true, true, true)
+		query, explodedArgs, err := BuildRangeInsertQuery(databaseName, originalTableName, ghostDatabaseName, ghostTableName, sharedColumns, sharedColumns, uniqueKey, uniqueKeyColumns, rangeStartValues, rangeEndValues, rangeStartArgs, rangeEndArgs, true, true, true)
 		require.NoError(t, err)
 		expected := `
 			insert /* gh-ost mydb.tbl */ ignore
 			into
-				mydb.ghost
+				bbdataarchive.ghost
 				(id, name, position)
 			(
 				select id, name, position
@@ -249,11 +250,11 @@ func TestBuildRangeInsertQuery(t *testing.T) {
 		rangeStartArgs := []interface{}{3, 17}
 		rangeEndArgs := []interface{}{103, 117}
 
-		query, explodedArgs, err := BuildRangeInsertQuery(databaseName, originalTableName, ghostTableName, sharedColumns, sharedColumns, uniqueKey, uniqueKeyColumns, rangeStartValues, rangeEndValues, rangeStartArgs, rangeEndArgs, false, true, true)
+		query, explodedArgs, err := BuildRangeInsertQuery(databaseName, originalTableName, ghostDatabaseName, ghostTableName, sharedColumns, sharedColumns, uniqueKey, uniqueKeyColumns, rangeStartValues, rangeEndValues, rangeStartArgs, rangeEndArgs, false, true, true)
 		require.NoError(t, err)
 		expected := `
 			insert /* gh-ost mydb.tbl */ ignore
-			into mydb.ghost (id, name, position)
+			into bbdataarchive.ghost (id, name, position)
 			(select id, name, position from mydb.tbl force index (name_position_uidx) where name = @v1s and position > @v2s for share nowait)
 			union all
 			(select id, name, position from mydb.tbl force index (name_position_uidx) where name > @v1s and name < @v1e for share nowait)
@@ -271,11 +272,11 @@ func TestBuildRangeInsertQuery(t *testing.T) {
 		rangeStartArgs := []interface{}{3, 17}
 		rangeEndArgs := []interface{}{103, 117}
 
-		query, explodedArgs, err := BuildRangeInsertQuery(databaseName, originalTableName, ghostTableName, sharedColumns, sharedColumns, uniqueKey, uniqueKeyColumns, rangeStartValues, rangeEndValues, rangeStartArgs, rangeEndArgs, true, false, false)
+		query, explodedArgs, err := BuildRangeInsertQuery(databaseName, originalTableName, ghostDatabaseName, ghostTableName, sharedColumns, sharedColumns, uniqueKey, uniqueKeyColumns, rangeStartValues, rangeEndValues, rangeStartArgs, rangeEndArgs, true, false, false)
 		require.NoError(t, err)
 		expected := `
 			insert /* gh-ost mydb.tbl */ ignore
-			into mydb.ghost (id, name, position)
+			into bbdataarchive.ghost (id, name, position)
 			(select id, name, position from mydb.tbl force index (name_position_uidx) where name = @v1s and position >= @v2s )
 			union all
 			(select id, name, position from mydb.tbl force index (name_position_uidx) where name > @v1s and name < @v1e )
@@ -293,11 +294,11 @@ func TestBuildRangeInsertQuery(t *testing.T) {
 		rangeStartArgs := []interface{}{3, 17}
 		rangeEndArgs := []interface{}{103, 117}
 
-		query, explodedArgs, err := BuildRangeInsertQuery(databaseName, originalTableName, ghostTableName, sharedColumns, sharedColumns, uniqueKey, uniqueKeyColumns, rangeStartValues, rangeEndValues, rangeStartArgs, rangeEndArgs, true, true, false)
+		query, explodedArgs, err := BuildRangeInsertQuery(databaseName, originalTableName, ghostDatabaseName, ghostTableName, sharedColumns, sharedColumns, uniqueKey, uniqueKeyColumns, rangeStartValues, rangeEndValues, rangeStartArgs, rangeEndArgs, true, true, false)
 		require.NoError(t, err)
 		expected := `
 			insert /* gh-ost mydb.tbl */ ignore
-			into mydb.ghost (id, name, position)
+			into bbdataarchive.ghost (id, name, position)
 			(select id, name, position from mydb.tbl force index (name_position_uidx) where name = @v1s and position >= @v2s lock in share mode)
 			union all
 			(select id, name, position from mydb.tbl force index (name_position_uidx) where name > @v1s and name < @v1e lock in share mode)
@@ -311,6 +312,7 @@ func TestBuildRangeInsertQuery(t *testing.T) {
 func TestBuildRangeInsertQueryRenameMap(t *testing.T) {
 	databaseName := "mydb"
 	originalTableName := "tbl"
+	ghostDatabaseName := "bbdataarchive"
 	ghostTableName := "ghost"
 	sharedColumns := []string{"id", "name", "position"}
 	mappedSharedColumns := []string{"id", "name", "location"}
@@ -322,12 +324,12 @@ func TestBuildRangeInsertQueryRenameMap(t *testing.T) {
 		rangeStartArgs := []interface{}{3}
 		rangeEndArgs := []interface{}{103}
 
-		query, explodedArgs, err := BuildRangeInsertQuery(databaseName, originalTableName, ghostTableName, sharedColumns, mappedSharedColumns, uniqueKey, uniqueKeyColumns, rangeStartValues, rangeEndValues, rangeStartArgs, rangeEndArgs, true, true, true)
+		query, explodedArgs, err := BuildRangeInsertQuery(databaseName, originalTableName, ghostDatabaseName, ghostTableName, sharedColumns, mappedSharedColumns, uniqueKey, uniqueKeyColumns, rangeStartValues, rangeEndValues, rangeStartArgs, rangeEndArgs, true, true, true)
 		require.NoError(t, err)
 		expected := `
 			insert /* gh-ost mydb.tbl */ ignore
 			into
-				mydb.ghost
+				bbdataarchive.ghost
 				(id, name, location)
 			(
 				select id, name, position
@@ -351,11 +353,11 @@ func TestBuildRangeInsertQueryRenameMap(t *testing.T) {
 		rangeStartArgs := []interface{}{3, 17}
 		rangeEndArgs := []interface{}{103, 117}
 
-		query, explodedArgs, err := BuildRangeInsertQuery(databaseName, originalTableName, ghostTableName, sharedColumns, mappedSharedColumns, uniqueKey, uniqueKeyColumns, rangeStartValues, rangeEndValues, rangeStartArgs, rangeEndArgs, true, true, true)
+		query, explodedArgs, err := BuildRangeInsertQuery(databaseName, originalTableName, ghostDatabaseName, ghostTableName, sharedColumns, mappedSharedColumns, uniqueKey, uniqueKeyColumns, rangeStartValues, rangeEndValues, rangeStartArgs, rangeEndArgs, true, true, true)
 		require.NoError(t, err)
 		expected := `
 			insert /* gh-ost mydb.tbl */ ignore
-			into mydb.ghost (id, name, location)
+			into bbdataarchive.ghost (id, name, location)
 			(select id, name, position from mydb.tbl force index (name_position_uidx) where name = @v1s and position >= @v2s for share nowait)
 			union all
 			(select id, name, position from mydb.tbl force index (name_position_uidx) where name > @v1s and name < @v1e for share nowait)
@@ -369,6 +371,7 @@ func TestBuildRangeInsertQueryRenameMap(t *testing.T) {
 func TestBuildRangeInsertPreparedQuery(t *testing.T) {
 	databaseName := "mydb"
 	originalTableName := "tbl"
+	ghostDatabaseName := "bbdataarchive"
 	ghostTableName := "ghost"
 	sharedColumns := []string{"id", "name", "position"}
 	{
@@ -377,11 +380,11 @@ func TestBuildRangeInsertPreparedQuery(t *testing.T) {
 		rangeStartArgs := []interface{}{3, 17}
 		rangeEndArgs := []interface{}{103, 117}
 
-		query, explodedArgs, err := BuildRangeInsertPreparedQuery(databaseName, originalTableName, ghostTableName, sharedColumns, sharedColumns, uniqueKey, uniqueKeyColumns, rangeStartArgs, rangeEndArgs, true, true, true)
+		query, explodedArgs, err := BuildRangeInsertPreparedQuery(databaseName, originalTableName, ghostDatabaseName, ghostTableName, sharedColumns, sharedColumns, uniqueKey, uniqueKeyColumns, rangeStartArgs, rangeEndArgs, true, true, true)
 		require.NoError(t, err)
 		expected := `
 			insert /* gh-ost mydb.tbl */ ignore
-			into mydb.ghost (id, name, position)
+			into bbdataarchive.ghost (id, name, position)
 			(select id, name, position from mydb.tbl force index (name_position_uidx) where name = ? and position >= ? for share nowait)
 			union all
 			(select id, name, position from mydb.tbl force index (name_position_uidx) where name > ? and name < ? for share nowait)
@@ -397,12 +400,12 @@ func TestBuildRangeInsertPreparedQuery(t *testing.T) {
 		rangeStartArgs := []interface{}{3, 17}
 		rangeEndArgs := []interface{}{3, 117}
 
-		query, explodedArgs, err := BuildRangeInsertPreparedQuery(databaseName, originalTableName, ghostTableName, sharedColumns, sharedColumns, uniqueKey, uniqueKeyColumns, rangeStartArgs, rangeEndArgs, true, true, true)
+		query, explodedArgs, err := BuildRangeInsertPreparedQuery(databaseName, originalTableName, ghostDatabaseName, ghostTableName, sharedColumns, sharedColumns, uniqueKey, uniqueKeyColumns, rangeStartArgs, rangeEndArgs, true, true, true)
 		require.NoError(t, err)
 		expected := `
 			insert /* gh-ost mydb.tbl */ ignore
 			into
-				mydb.ghost
+				bbdataarchive.ghost
 				(id, name, position)
 			(
 				select id, name, position
@@ -661,6 +664,7 @@ func TestBuildTwoColumnUnionParts(t *testing.T) {
 func TestBuildRangeInsertQueryTwoColumnGuards(t *testing.T) {
 	databaseName := "mydb"
 	originalTableName := "tbl"
+	ghostDatabaseName := "bbdataarchive"
 	ghostTableName := "ghost"
 	sharedColumnsListing := "id, name, position"
 	uniqueKey := "name_position_uidx"
@@ -670,7 +674,7 @@ func TestBuildRangeInsertQueryTwoColumnGuards(t *testing.T) {
 
 	call := func(rangeStartValues, rangeEndValues []string, rangeStartArgs, rangeEndArgs []interface{}) error {
 		_, _, err := buildRangeInsertQueryTwoColumn(
-			databaseName, originalTableName, ghostTableName,
+			databaseName, originalTableName, ghostDatabaseName, ghostTableName,
 			sharedColumnsListing, sharedColumnsListing,
 			uniqueKey, uniqueKeyColumns,
 			rangeStartValues, rangeEndValues,

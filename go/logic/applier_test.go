@@ -107,6 +107,7 @@ func TestApplierBuildDMLEventQuery(t *testing.T) {
 	migrationContext := base.NewMigrationContext()
 	migrationContext.DatabaseName = "test"
 	migrationContext.OriginalTableName = "test"
+	migrationContext.GhostDatabaseName = "bbdataarchive"
 	migrationContext.OriginalTableColumns = columns
 	migrationContext.SharedColumns = columns
 	migrationContext.MappedSharedColumns = columns
@@ -128,9 +129,9 @@ func TestApplierBuildDMLEventQuery(t *testing.T) {
 		res := applier.buildDMLEventQuery(binlogEvent)
 		require.Len(t, res, 1)
 		require.NoError(t, res[0].err)
-		require.Equal(t, `delete /* gh-ost `+"`test`.`_test_gho`"+` */
+		require.Equal(t, `delete /* gh-ost `+"`bbdataarchive`.`~test_gho`"+` */
 		from
-			`+"`test`.`_test_gho`"+`
+			`+"`bbdataarchive`.`~test_gho`"+`
 		where
 			((`+"`id`"+` = ?) and (`+"`item_id`"+` = ?))`,
 			strings.TrimSpace(res[0].query))
@@ -149,9 +150,9 @@ func TestApplierBuildDMLEventQuery(t *testing.T) {
 		require.Len(t, res, 1)
 		require.NoError(t, res[0].err)
 		require.Equal(t,
-			`insert /* gh-ost `+"`test`.`_test_gho`"+` */ ignore
+			`insert /* gh-ost `+"`bbdataarchive`.`~test_gho`"+` */ ignore
 		into
-			`+"`test`.`_test_gho`"+`
+			`+"`bbdataarchive`.`~test_gho`"+`
 			`+"(`id`, `item_id`)"+`
 		values
 			(?, ?)`,
@@ -172,8 +173,8 @@ func TestApplierBuildDMLEventQuery(t *testing.T) {
 		require.Len(t, res, 1)
 		require.NoError(t, res[0].err)
 		require.Equal(t,
-			`update /* gh-ost `+"`test`.`_test_gho`"+` */
-			`+"`test`.`_test_gho`"+`
+			`update /* gh-ost `+"`bbdataarchive`.`~test_gho`"+` */
+			`+"`bbdataarchive`.`~test_gho`"+`
 		set
 			`+"`id`"+`=?, `+"`item_id`"+`=?
 		where
@@ -371,6 +372,9 @@ func (suite *ApplierTestSuite) SetupTest() {
 	ctx := context.Background()
 	_, err := suite.db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", testMysqlDatabase))
 	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", testMysqlGhostDatabase))
+	suite.Require().NoError(err)
 }
 
 func (suite *ApplierTestSuite) TearDownTest() {
@@ -379,6 +383,9 @@ func (suite *ApplierTestSuite) TearDownTest() {
 	_, err := suite.db.ExecContext(ctx, "DROP TABLE IF EXISTS "+getTestTableName())
 	suite.Require().NoError(err)
 	_, err = suite.db.ExecContext(ctx, "DROP TABLE IF EXISTS "+getTestGhostTableName())
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", testMysqlGhostDatabase))
 	suite.Require().NoError(err)
 }
 
@@ -395,6 +402,7 @@ func (suite *ApplierTestSuite) TestInitDBConnections() {
 
 	migrationContext := newTestMigrationContext()
 	migrationContext.ApplierConnectionConfig = connectionConfig
+	migrationContext.GhostDatabaseName = testMysqlGhostDatabase
 	migrationContext.SetConnectionConfig("innodb")
 
 	applier := NewApplier(migrationContext)
@@ -419,7 +427,7 @@ func (suite *ApplierTestSuite) TestApplyDMLEventQueries() {
 	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT, item_id INT);", getTestTableName()))
 	suite.Require().NoError(err)
 
-	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT, item_id INT);", getTestGhostTableName()))
+	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT, item_id INT);", getTestGhostDatabaseTableName()))
 	suite.Require().NoError(err)
 
 	connectionConfig, err := getTestConnectionConfig(ctx, suite.mysqlContainer)
@@ -427,6 +435,7 @@ func (suite *ApplierTestSuite) TestApplyDMLEventQueries() {
 
 	migrationContext := newTestMigrationContext()
 	migrationContext.ApplierConnectionConfig = connectionConfig
+	migrationContext.GhostDatabaseName = testMysqlGhostDatabase
 	migrationContext.SetConnectionConfig("innodb")
 
 	migrationContext.OriginalTableColumns = sql.NewColumnList([]string{"id", "item_id"})
@@ -456,7 +465,7 @@ func (suite *ApplierTestSuite) TestApplyDMLEventQueries() {
 	suite.Require().NoError(err)
 
 	// Check that the row was inserted
-	rows, err := suite.db.Query("SELECT * FROM " + getTestGhostTableName())
+	rows, err := suite.db.Query("SELECT * FROM " + getTestGhostDatabaseTableName())
 	suite.Require().NoError(err)
 	defer rows.Close()
 
@@ -489,6 +498,7 @@ func (suite *ApplierTestSuite) TestValidateOrDropExistingTables() {
 
 	migrationContext := newTestMigrationContext()
 	migrationContext.ApplierConnectionConfig = connectionConfig
+	migrationContext.GhostDatabaseName = testMysqlGhostDatabase
 	migrationContext.SetConnectionConfig("innodb")
 
 	migrationContext.OriginalTableColumns = sql.NewColumnList([]string{"id", "item_id"})
@@ -513,7 +523,7 @@ func (suite *ApplierTestSuite) TestValidateOrDropExistingTablesWithGhostTableExi
 	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT, item_id INT);", getTestTableName()))
 	suite.Require().NoError(err)
 
-	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT, item_id INT);", getTestGhostTableName()))
+	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT, item_id INT);", getTestGhostDatabaseTableName()))
 	suite.Require().NoError(err)
 
 	connectionConfig, err := getTestConnectionConfig(ctx, suite.mysqlContainer)
@@ -521,6 +531,7 @@ func (suite *ApplierTestSuite) TestValidateOrDropExistingTablesWithGhostTableExi
 
 	migrationContext := newTestMigrationContext()
 	migrationContext.ApplierConnectionConfig = connectionConfig
+	migrationContext.GhostDatabaseName = testMysqlGhostDatabase
 	migrationContext.SetConnectionConfig("innodb")
 
 	migrationContext.OriginalTableColumns = sql.NewColumnList([]string{"id", "item_id"})
@@ -535,7 +546,7 @@ func (suite *ApplierTestSuite) TestValidateOrDropExistingTablesWithGhostTableExi
 
 	err = applier.ValidateOrDropExistingTables()
 	suite.Require().Error(err)
-	suite.Require().EqualError(err, "table `_testing_gho` already exists. Panicking. Use --initially-drop-ghost-table to force dropping it, though I really prefer that you drop it or rename it away")
+	suite.Require().EqualError(err, "table `bbdataarchive`.`~testing_gho` already exists. Panicking. Use --initially-drop-ghost-table to force dropping it, though I really prefer that you drop it or rename it away")
 }
 
 func (suite *ApplierTestSuite) TestValidateOrDropExistingTablesWithGhostTableExistingAndInitiallyDropGhostTableSet() {
@@ -546,7 +557,7 @@ func (suite *ApplierTestSuite) TestValidateOrDropExistingTablesWithGhostTableExi
 	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT, item_id INT);", getTestTableName()))
 	suite.Require().NoError(err)
 
-	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT, item_id INT);", getTestGhostTableName()))
+	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT, item_id INT);", getTestGhostDatabaseTableName()))
 	suite.Require().NoError(err)
 
 	connectionConfig, err := getTestConnectionConfig(ctx, suite.mysqlContainer)
@@ -554,6 +565,7 @@ func (suite *ApplierTestSuite) TestValidateOrDropExistingTablesWithGhostTableExi
 
 	migrationContext := newTestMigrationContext()
 	migrationContext.ApplierConnectionConfig = connectionConfig
+	migrationContext.GhostDatabaseName = testMysqlGhostDatabase
 	migrationContext.SetConnectionConfig("innodb")
 
 	migrationContext.InitiallyDropGhostTable = true
@@ -569,7 +581,7 @@ func (suite *ApplierTestSuite) TestValidateOrDropExistingTablesWithGhostTableExi
 
 	// Check that the ghost table was dropped
 	var tableName string
-	err = suite.db.QueryRow(fmt.Sprintf("SHOW TABLES IN test LIKE '_%s_gho'", testMysqlTableName)).Scan(&tableName)
+	err = suite.db.QueryRow(fmt.Sprintf("SHOW TABLES IN %s LIKE '~%s_gho'", testMysqlGhostDatabase, testMysqlTableName)).Scan(&tableName)
 	suite.Require().Error(err)
 	suite.Require().Equal(gosql.ErrNoRows, err)
 }
@@ -664,6 +676,7 @@ func (suite *ApplierTestSuite) TestCreateGhostTable() {
 
 	migrationContext := newTestMigrationContext()
 	migrationContext.ApplierConnectionConfig = connectionConfig
+	migrationContext.GhostDatabaseName = testMysqlGhostDatabase
 	migrationContext.SetConnectionConfig("innodb")
 
 	migrationContext.OriginalTableColumns = sql.NewColumnList([]string{"id", "item_id"})
@@ -683,15 +696,15 @@ func (suite *ApplierTestSuite) TestCreateGhostTable() {
 
 	// Check that the ghost table was created
 	var tableName string
-	err = suite.db.QueryRow("SHOW TABLES IN test LIKE '_testing_gho'").Scan(&tableName)
+	err = suite.db.QueryRow(fmt.Sprintf("SHOW TABLES IN %s LIKE '~testing_gho'", testMysqlGhostDatabase)).Scan(&tableName)
 	suite.Require().NoError(err)
-	suite.Require().Equal("_testing_gho", tableName)
+	suite.Require().Equal("~testing_gho", tableName)
 
 	// Check that the ghost table has the same columns as the original table
 	var createDDL string
-	err = suite.db.QueryRow(fmt.Sprintf("SHOW CREATE TABLE %s", getTestGhostTableName())).Scan(&tableName, &createDDL)
+	err = suite.db.QueryRow(fmt.Sprintf("SHOW CREATE TABLE %s", getTestGhostDatabaseTableName())).Scan(&tableName, &createDDL)
 	suite.Require().NoError(err)
-	suite.Require().Equal("CREATE TABLE `_testing_gho` (\n  `id` int DEFAULT NULL,\n  `item_id` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci", createDDL)
+	suite.Require().Equal("CREATE TABLE `~testing_gho` (\n  `id` int DEFAULT NULL,\n  `item_id` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci", createDDL)
 }
 
 func (suite *ApplierTestSuite) TestAnalyzeGhostTable() {
@@ -725,7 +738,7 @@ func (suite *ApplierTestSuite) TestAnalyzeGhostTable() {
 	// level. A naive statement-error check would fail open and swap in a broken table; the
 	// row-inspection guard must refuse instead. ErrorContains pins the refusal to that guard rather
 	// than to any incidental error.
-	_, err = suite.db.ExecContext(ctx, "DROP TABLE test._testing_gho")
+	_, err = suite.db.ExecContext(ctx, "DROP TABLE "+getTestGhostTableName())
 	suite.Require().NoError(err)
 	suite.Require().ErrorContains(applier.AnalyzeGhostTable(), "did not report status OK")
 
@@ -801,7 +814,7 @@ func (suite *ApplierTestSuite) TestPanicOnWarningsInApplyIterationInsertQuerySuc
 	suite.Require().NoError(err)
 	suite.Require().Equal(int64(0), rowsAffected)
 
-	// Ensure Duplicate entry '42' for key '_testing_gho.item_id' is ignored correctly
+	// Ensure Duplicate entry '42' for key '~testing_gho.item_id' is ignored correctly
 	suite.Require().Empty(applier.migrationContext.MigrationLastInsertSQLWarnings)
 
 	// Check that the row was inserted
@@ -1726,6 +1739,185 @@ func (suite *ApplierTestSuite) TestMultipleDMLEventsInBatch() {
 	suite.Require().Equal(3, results[1].id)
 	suite.Require().Equal("charlie@example.com", results[1].email)
 	// Critically: id=2 (bob@example.com) is NOT present, proving event #3 was rolled back
+}
+
+func (suite *ApplierTestSuite) TestDropCheckpointTableUsesOriginalDatabase() {
+	ctx := context.Background()
+
+	_, err := suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT);", getTestTableName()))
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE `%s`.`~testing_ghk` (id INT);", testMysqlDatabase))
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE `%s`.`~testing_ghk` (id INT);", testMysqlGhostDatabase))
+	suite.Require().NoError(err)
+
+	connectionConfig, err := getTestConnectionConfig(ctx, suite.mysqlContainer)
+	suite.Require().NoError(err)
+
+	migrationContext := newTestMigrationContext()
+	migrationContext.ApplierConnectionConfig = connectionConfig
+	migrationContext.GhostDatabaseName = testMysqlGhostDatabase
+	migrationContext.SetConnectionConfig("innodb")
+
+	applier := NewApplier(migrationContext)
+	defer applier.Teardown()
+
+	err = applier.InitDBConnections()
+	suite.Require().NoError(err)
+
+	err = applier.DropCheckpointTable()
+	suite.Require().NoError(err)
+
+	// The checkpoint table records the original table's progress, so it stays with the
+	// original table even when the ghost tables live elsewhere.
+	var tableName string
+	err = suite.db.QueryRow(fmt.Sprintf("SHOW TABLES IN %s LIKE '~testing_ghk'", testMysqlDatabase)).Scan(&tableName)
+	suite.Require().ErrorIs(err, gosql.ErrNoRows)
+
+	err = suite.db.QueryRow(fmt.Sprintf("SHOW TABLES IN %s LIKE '~testing_ghk'", testMysqlGhostDatabase)).Scan(&tableName)
+	suite.Require().NoError(err)
+	suite.Require().Equal("~testing_ghk", tableName)
+}
+
+func (suite *ApplierTestSuite) TestCreateAndDropTriggersUsesGhostDatabase() {
+	ctx := context.Background()
+
+	_, err := suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT PRIMARY KEY, item_id INT);", getTestTableName()))
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT PRIMARY KEY, item_id INT);", getTestGhostDatabaseTableName()))
+	suite.Require().NoError(err)
+
+	connectionConfig, err := getTestConnectionConfig(ctx, suite.mysqlContainer)
+	suite.Require().NoError(err)
+
+	migrationContext := newTestMigrationContext()
+	migrationContext.ApplierConnectionConfig = connectionConfig
+	migrationContext.GhostDatabaseName = testMysqlGhostDatabase
+	migrationContext.SetConnectionConfig("innodb")
+	migrationContext.Triggers = []mysql.Trigger{{
+		Name:      "testing_ai",
+		Event:     "INSERT",
+		Timing:    "AFTER",
+		Statement: "SET @ghost_trigger_seen = NEW.id",
+	}}
+
+	applier := NewApplier(migrationContext)
+	defer applier.Teardown()
+
+	err = applier.InitDBConnections()
+	suite.Require().NoError(err)
+
+	err = applier.CreateTriggersOnGhost()
+	suite.Require().NoError(err)
+
+	triggerQuery := "SELECT trigger_name FROM information_schema.triggers WHERE trigger_schema = ? AND trigger_name = 'testing_ai'"
+	var triggerName string
+	err = suite.db.QueryRow(triggerQuery, testMysqlGhostDatabase).Scan(&triggerName)
+	suite.Require().NoError(err)
+	suite.Require().Equal("testing_ai", triggerName)
+
+	err = applier.DropTriggersFromGhost()
+	suite.Require().NoError(err)
+
+	err = suite.db.QueryRow(triggerQuery, testMysqlGhostDatabase).Scan(&triggerName)
+	suite.Require().ErrorIs(err, gosql.ErrNoRows)
+}
+
+func (suite *ApplierTestSuite) TestValidateGhostTriggersDontExistUsesGhostDatabase() {
+	ctx := context.Background()
+
+	_, err := suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT PRIMARY KEY, item_id INT);", getTestGhostDatabaseTableName()))
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TRIGGER `%s`.testing_ai AFTER INSERT ON %s FOR EACH ROW SET @ghost_trigger_seen = NEW.id", testMysqlGhostDatabase, getTestGhostDatabaseTableName()))
+	suite.Require().NoError(err)
+
+	migrationContext := newTestMigrationContext()
+	migrationContext.GhostDatabaseName = testMysqlGhostDatabase
+	migrationContext.Triggers = []mysql.Trigger{{
+		Name: "testing_ai",
+	}}
+
+	inspector := &Inspector{
+		db:               suite.db,
+		migrationContext: migrationContext,
+	}
+
+	err = inspector.validateGhostTriggersDontExist()
+	suite.Require().Error(err)
+	suite.Require().Contains(err.Error(), "testing_ai")
+}
+
+func (suite *ApplierTestSuite) TestValidateTableTriggersRejectsSeparateGhostDatabase() {
+	ctx := context.Background()
+
+	_, err := suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TABLE %s (id INT PRIMARY KEY, item_id INT);", getTestTableName()))
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("CREATE TRIGGER `%s`.testing_ai AFTER INSERT ON %s FOR EACH ROW SET @original_trigger_seen = NEW.id", testMysqlDatabase, getTestTableName()))
+	suite.Require().NoError(err)
+
+	migrationContext := newTestMigrationContext()
+	migrationContext.IncludeTriggers = true
+	migrationContext.TriggerSuffix = "_gho"
+	migrationContext.GhostDatabaseName = testMysqlGhostDatabase
+
+	inspector := &Inspector{
+		db:               suite.db,
+		migrationContext: migrationContext,
+	}
+
+	err = inspector.validateTableTriggers()
+	suite.Require().Error(err)
+	suite.Require().Contains(err.Error(), "include-triggers")
+	suite.Require().Contains(err.Error(), testMysqlGhostDatabase)
+}
+
+func (suite *ApplierTestSuite) TestValidateGrantsRequiresGhostDatabasePrivileges() {
+	ctx := context.Background()
+
+	_, err := suite.db.ExecContext(ctx, "DROP USER IF EXISTS 'ghost_grants'@'%'")
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, "CREATE USER 'ghost_grants'@'%' IDENTIFIED BY 'ghost-grants-password'")
+	suite.Require().NoError(err)
+	defer suite.db.ExecContext(ctx, "DROP USER IF EXISTS 'ghost_grants'@'%'") //nolint:errcheck
+
+	_, err = suite.db.ExecContext(ctx, "GRANT REPLICATION CLIENT, REPLICATION SLAVE ON *.* TO 'ghost_grants'@'%'")
+	suite.Require().NoError(err)
+	_, err = suite.db.ExecContext(ctx, fmt.Sprintf("GRANT ALL PRIVILEGES ON %s.* TO 'ghost_grants'@'%%'", testMysqlDatabase))
+	suite.Require().NoError(err)
+
+	connectionConfig, err := getTestConnectionConfig(ctx, suite.mysqlContainer)
+	suite.Require().NoError(err)
+	connectionConfig.User = "ghost_grants"
+	connectionConfig.Password = "ghost-grants-password"
+	// getTestConnectionConfig leaves the isolation level unset, which GetDBUri
+	// would emit as an empty transaction_isolation parameter. Set it as
+	// SetConnectionConfig does, and open through mysql.OpenDB rather than
+	// gosql.Open, which is what applies that parameter portably.
+	connectionConfig.TransactionIsolation = "REPEATABLE-READ"
+
+	limitedDB, err := mysql.OpenDB(connectionConfig.GetDBUri(testMysqlDatabase))
+	suite.Require().NoError(err)
+	defer limitedDB.Close()
+
+	migrationContext := newTestMigrationContext()
+	migrationContext.GhostDatabaseName = testMysqlGhostDatabase
+
+	inspector := &Inspector{
+		db:               limitedDB,
+		migrationContext: migrationContext,
+	}
+
+	// Grants on the original database alone are not enough once the ghost tables
+	// are created somewhere else.
+	err = inspector.validateGrants()
+	suite.Require().Error(err)
+	suite.Require().Contains(err.Error(), testMysqlGhostDatabase)
 }
 
 func TestApplier(t *testing.T) {

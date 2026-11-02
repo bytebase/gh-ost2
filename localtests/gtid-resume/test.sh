@@ -30,7 +30,7 @@
 export THROTTLE_SECONDS=0
 
 table_name="gh_ost_test"
-ghost_table_name="_gh_ost_test_gho"
+ghost_table_name="\`~gh_ost_test_gho\`"
 ghost_socket="/tmp/gh-ost.test.sock"
 
 stop_ghost() {

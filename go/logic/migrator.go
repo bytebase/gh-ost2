@@ -1303,7 +1303,7 @@ func (mgtr *Migrator) printMigrationStatusHint(writers ...io.Writer) {
 	fmt.Fprintf(w, "# Migrating %s.%s; Ghost table is %s.%s\n",
 		sql.EscapeName(mgtr.migrationContext.DatabaseName),
 		sql.EscapeName(mgtr.migrationContext.OriginalTableName),
-		sql.EscapeName(mgtr.migrationContext.DatabaseName),
+		sql.EscapeName(mgtr.migrationContext.GetGhostDatabaseName()),
 		sql.EscapeName(mgtr.migrationContext.GetGhostTableName()),
 	)
 	fmt.Fprintf(w, "# Migrating %+v; inspecting %+v; executing on %+v\n",
@@ -1534,7 +1534,7 @@ func (mgtr *Migrator) initiateStreaming() error {
 	}
 	mgtr.eventsStreamer.AddListener(
 		false,
-		mgtr.migrationContext.DatabaseName,
+		mgtr.migrationContext.GetGhostDatabaseName(),
 		mgtr.migrationContext.GetChangelogTableName(),
 		func(dmlEntry *binlog.BinlogEntry) error {
 			return mgtr.onChangelogEvent(dmlEntry)
@@ -2004,7 +2004,7 @@ func (mgtr *Migrator) finalCleanup() error {
 	}
 
 	if mgtr.migrationContext.Noop {
-		if createTableStatement, err := mgtr.inspector.showCreateTable(mgtr.migrationContext.GetGhostTableName()); err == nil {
+		if createTableStatement, err := mgtr.inspector.showCreateTable(mgtr.migrationContext.GetGhostDatabaseName(), mgtr.migrationContext.GetGhostTableName()); err == nil {
 			mgtr.migrationContext.Log.Infof("New table structure follows")
 			fmt.Println(createTableStatement)
 		} else {
@@ -2027,7 +2027,7 @@ func (mgtr *Migrator) finalCleanup() error {
 		}
 	} else if !mgtr.migrationContext.Noop {
 		mgtr.migrationContext.Log.Infof("Am not dropping old table because I want this operation to be as live as possible. If you insist I should do it, please add `--ok-to-drop-table` next time. But I prefer you do not. To drop the old table, issue:")
-		mgtr.migrationContext.Log.Infof("-- drop table %s.%s", sql.EscapeName(mgtr.migrationContext.DatabaseName), sql.EscapeName(mgtr.migrationContext.GetOldTableName()))
+		mgtr.migrationContext.Log.Infof("-- drop table %s.%s", sql.EscapeName(mgtr.migrationContext.GetGhostDatabaseName()), sql.EscapeName(mgtr.migrationContext.GetOldTableName()))
 		if mgtr.migrationContext.Checkpoint {
 			mgtr.migrationContext.Log.Infof("Am not dropping checkpoint table without `--ok-to-drop-table`. To drop the checkpoint table, issue:")
 			mgtr.migrationContext.Log.Infof("-- drop table %s.%s", sql.EscapeName(mgtr.migrationContext.DatabaseName), sql.EscapeName(mgtr.migrationContext.GetCheckpointTableName()))

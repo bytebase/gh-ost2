@@ -728,6 +728,9 @@ func (suite *MigratorTestSuite) SetupTest() {
 	_, err := suite.db.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS "+testMysqlDatabase)
 	suite.Require().NoError(err)
 
+	_, err = suite.db.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS "+testMysqlGhostDatabase)
+	suite.Require().NoError(err)
+
 	os.Remove("/tmp/gh-ost.sock")
 }
 
@@ -741,6 +744,9 @@ func (suite *MigratorTestSuite) TearDownTest() {
 	_, err = suite.db.ExecContext(ctx, "DROP TABLE IF EXISTS "+getTestRevertedTableName())
 	suite.Require().NoError(err)
 	_, err = suite.db.ExecContext(ctx, "DROP TABLE IF EXISTS "+getTestOldTableName())
+	suite.Require().NoError(err)
+
+	_, err = suite.db.ExecContext(ctx, "DROP DATABASE IF EXISTS "+testMysqlGhostDatabase)
 	suite.Require().NoError(err)
 }
 
@@ -756,6 +762,7 @@ func (suite *MigratorTestSuite) TestMigrateEmpty() {
 	migrationContext := newTestMigrationContext()
 	migrationContext.ApplierConnectionConfig = connectionConfig
 	migrationContext.InspectorConnectionConfig = connectionConfig
+	migrationContext.GhostDatabaseName = testMysqlGhostDatabase
 	migrationContext.SetConnectionConfig("innodb")
 	migrationContext.InitiallyDropOldTable = true
 
@@ -775,14 +782,14 @@ func (suite *MigratorTestSuite) TestMigrateEmpty() {
 	suite.Require().Equal("CREATE TABLE `testing` (\n  `id` int NOT NULL,\n  `name` varchar(64) DEFAULT NULL,\n  `foobar` varchar(255) DEFAULT NULL,\n  PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci", createTableSQL)
 
 	// Verify the changelog table was claned up
-	err = suite.db.QueryRow("SHOW TABLES IN test LIKE '_testing_ghc'").Scan(&tableName)
+	err = suite.db.QueryRow(fmt.Sprintf("SHOW TABLES IN %s LIKE '~testing_ghc'", testMysqlGhostDatabase)).Scan(&tableName)
 	suite.Require().Error(err)
 	suite.Require().Equal(gosql.ErrNoRows, err)
 
 	// Verify the old table was renamed
-	err = suite.db.QueryRow("SHOW TABLES IN test LIKE '_testing_del'").Scan(&tableName)
+	err = suite.db.QueryRow(fmt.Sprintf("SHOW TABLES IN %s LIKE '~testing_del'", testMysqlGhostDatabase)).Scan(&tableName)
 	suite.Require().NoError(err)
-	suite.Require().Equal("_testing_del", tableName)
+	suite.Require().Equal("~testing_del", tableName)
 }
 
 func (suite *MigratorTestSuite) TestRetryBatchCopyWithHooks() {
@@ -1260,7 +1267,7 @@ func (suite *MigratorTestSuite) TestCutOverLossDataCaseLockGhostBeforeRename() {
 	go func() {
 		holdConn, err := suite.db.Conn(ctx)
 		suite.Require().NoError(err)
-		_, err = holdConn.ExecContext(ctx, "SELECT *, sleep(2) FROM test._testing_gho WHERE id = 1")
+		_, err = holdConn.ExecContext(ctx, "SELECT *, sleep(2) FROM "+getTestGhostTableName()+" WHERE id = 1")
 		suite.Require().NoError(err)
 	}()
 
@@ -1277,7 +1284,7 @@ func (suite *MigratorTestSuite) TestCutOverLossDataCaseLockGhostBeforeRename() {
 	// Verify the new column was added
 	var delValue, OriginalValue int64
 	err = suite.db.QueryRow(
-		fmt.Sprintf("select count(*) from %s._%s_del", testMysqlDatabase, testMysqlTableName),
+		fmt.Sprintf("select count(*) from %s.`~%s_del`", testMysqlDatabase, testMysqlTableName),
 	).Scan(&delValue)
 	suite.Require().NoError(err)
 
@@ -1416,7 +1423,7 @@ func (suite *MigratorTestSuite) TestRevert() {
 
 	// checksum original and reverted table
 	var _tableName, checksum1, checksum2 string
-	rows, err := suite.db.Query(fmt.Sprintf("CHECKSUM TABLE %s, %s", testMysqlTableName, oldTableName))
+	rows, err := suite.db.Query(fmt.Sprintf("CHECKSUM TABLE %s, %s", sql.EscapeName(testMysqlTableName), sql.EscapeName(oldTableName)))
 	suite.Require().NoError(err)
 	defer rows.Close()
 	suite.Require().True(rows.Next())
@@ -1650,7 +1657,7 @@ func TestRetryExhaustion_TriggersAbort(t *testing.T) {
 func TestRevert_AbortsOnError(t *testing.T) {
 	migrationContext := base.NewMigrationContext()
 	migrationContext.Revert = true
-	migrationContext.OldTableName = "_test_del"
+	migrationContext.OldTableName = "~test_del"
 	migrationContext.OriginalTableName = "test"
 	migrationContext.DatabaseName = "testdb"
 	migrator := NewMigrator(migrationContext, "1.0.0")

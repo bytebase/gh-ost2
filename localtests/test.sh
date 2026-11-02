@@ -202,7 +202,7 @@ build_ghost_command() {
     --skip-metadata-lock-check \
     --initially-drop-old-table \
     --initially-drop-ghost-table \
-    --throttle-query='select timestampdiff(second, min(last_update), now()) < ${THROTTLE_SECONDS:-2} from _${table_name}_ghc' \
+    --throttle-query='select timestampdiff(second, min(last_update), now()) < ${THROTTLE_SECONDS:-2} from \`~${table_name}_ghc\`' \
     --throttle-flag-file=$throttle_flag_file \
     --serve-socket-file=/tmp/gh-ost.test.sock \
     --initially-drop-socket-file \
@@ -377,7 +377,7 @@ test_single() {
     wait_replica_caught_up
 
     table_name="gh_ost_test"
-    ghost_table_name="_gh_ost_test_gho"
+    ghost_table_name="\`~gh_ost_test_gho\`"
 
     # Check for custom test script
     if [ -f $tests_path/$test_name/test.sh ]; then
@@ -416,7 +416,7 @@ test_single() {
             return 0
         fi
         table_name="sbtest1"
-        ghost_table_name="_${table_name}_gho"
+        ghost_table_name="\`~${table_name}_gho\`"
         echo "Preparing sysbench..."
         sysbench_prepare "$master_host" "$master_port"
 

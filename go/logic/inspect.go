@@ -102,15 +102,15 @@ func (isp *Inspector) ValidateOriginalTable() (err error) {
 	return nil
 }
 
-func (isp *Inspector) InspectTableColumnsAndUniqueKeys(tableName string) (columns *sql.ColumnList, virtualColumns *sql.ColumnList, uniqueKeys [](*sql.UniqueKey), err error) {
-	uniqueKeys, err = isp.getCandidateUniqueKeys(tableName)
+func (isp *Inspector) InspectTableColumnsAndUniqueKeys(databaseName, tableName string) (columns *sql.ColumnList, virtualColumns *sql.ColumnList, uniqueKeys [](*sql.UniqueKey), err error) {
+	uniqueKeys, err = isp.getCandidateUniqueKeys(databaseName, tableName)
 	if err != nil {
 		return columns, virtualColumns, uniqueKeys, err
 	}
 	if len(uniqueKeys) == 0 {
 		return columns, virtualColumns, uniqueKeys, fmt.Errorf("no PRIMARY nor UNIQUE key found in table! Bailing out")
 	}
-	columns, virtualColumns, err = mysql.GetTableColumns(isp.db, isp.migrationContext.DatabaseName, tableName)
+	columns, virtualColumns, err = mysql.GetTableColumns(isp.db, databaseName, tableName)
 	if err != nil {
 		return columns, virtualColumns, uniqueKeys, err
 	}
@@ -119,7 +119,7 @@ func (isp *Inspector) InspectTableColumnsAndUniqueKeys(tableName string) (column
 }
 
 func (isp *Inspector) InspectOriginalTable() (err error) {
-	isp.migrationContext.OriginalTableColumns, isp.migrationContext.OriginalTableVirtualColumns, isp.migrationContext.OriginalTableUniqueKeys, err = isp.InspectTableColumnsAndUniqueKeys(isp.migrationContext.OriginalTableName)
+	isp.migrationContext.OriginalTableColumns, isp.migrationContext.OriginalTableVirtualColumns, isp.migrationContext.OriginalTableUniqueKeys, err = isp.InspectTableColumnsAndUniqueKeys(isp.migrationContext.DatabaseName, isp.migrationContext.OriginalTableName)
 	if err != nil {
 		return err
 	}
@@ -139,7 +139,7 @@ func (isp *Inspector) inspectOriginalAndGhostTables() (err error) {
 		return fmt.Errorf("it seems like table structure is not identical between master and replica. This scenario is not supported")
 	}
 
-	isp.migrationContext.GhostTableColumns, isp.migrationContext.GhostTableVirtualColumns, isp.migrationContext.GhostTableUniqueKeys, err = isp.InspectTableColumnsAndUniqueKeys(isp.migrationContext.GetGhostTableName())
+	isp.migrationContext.GhostTableColumns, isp.migrationContext.GhostTableVirtualColumns, isp.migrationContext.GhostTableUniqueKeys, err = isp.InspectTableColumnsAndUniqueKeys(isp.migrationContext.GetGhostDatabaseName(), isp.migrationContext.GetGhostTableName())
 	if err != nil {
 		return err
 	}
@@ -188,7 +188,7 @@ func (isp *Inspector) inspectOriginalAndGhostTables() (err error) {
 	// the `getTableColumns()` function, but it's a later patch and introduces some complexity; I feel
 	// comfortable in doing this as a separate step.
 	isp.applyColumnTypes(isp.migrationContext.DatabaseName, isp.migrationContext.OriginalTableName, isp.migrationContext.OriginalTableColumns, isp.migrationContext.SharedColumns, &isp.migrationContext.UniqueKey.Columns)
-	isp.applyColumnTypes(isp.migrationContext.DatabaseName, isp.migrationContext.GetGhostTableName(), isp.migrationContext.GhostTableColumns, isp.migrationContext.MappedSharedColumns)
+	isp.applyColumnTypes(isp.migrationContext.GetGhostDatabaseName(), isp.migrationContext.GetGhostTableName(), isp.migrationContext.GhostTableColumns, isp.migrationContext.MappedSharedColumns)
 
 	for i := range isp.migrationContext.SharedColumns.Columns() {
 		column := isp.migrationContext.SharedColumns.Columns()[i]
@@ -233,7 +233,8 @@ func (isp *Inspector) validateGrants() error {
 	foundSuper := false
 	foundReplicationClient := false
 	foundReplicationSlave := false
-	foundDBAll := false
+	requiredDatabases := isp.requiredMigrationDatabases()
+	foundDBAll := make(map[string]bool, len(requiredDatabases))
 
 	err := sqlutils.QueryRowsMap(isp.db, query, func(rowMap sqlutils.RowMap) error {
 		for _, grantData := range rowMap {
@@ -251,17 +252,15 @@ func (isp *Inspector) validateGrants() error {
 			if strings.Contains(grant, `REPLICATION SLAVE`) && strings.Contains(grant, ` ON *.*`) {
 				foundReplicationSlave = true
 			}
-			if strings.Contains(grant, fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.*", isp.migrationContext.DatabaseName)) {
-				foundDBAll = true
-			}
-			if strings.Contains(grant, fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.*", strings.ReplaceAll(isp.migrationContext.DatabaseName, "_", "\\_"))) {
-				foundDBAll = true
-			}
 			if base.StringContainsAll(grant, `ALTER`, `CREATE`, `DELETE`, `DROP`, `INDEX`, `INSERT`, `LOCK TABLES`, `SELECT`, `TRIGGER`, `UPDATE`, ` ON *.*`) {
-				foundDBAll = true
+				for _, databaseName := range requiredDatabases {
+					foundDBAll[databaseName] = true
+				}
 			}
-			if base.StringContainsAll(grant, `ALTER`, `CREATE`, `DELETE`, `DROP`, `INDEX`, `INSERT`, `LOCK TABLES`, `SELECT`, `TRIGGER`, `UPDATE`, fmt.Sprintf(" ON `%s`.*", isp.migrationContext.DatabaseName)) {
-				foundDBAll = true
+			for _, databaseName := range requiredDatabases {
+				if grantAppliesToDatabase(grant, databaseName) {
+					foundDBAll[databaseName] = true
+				}
 			}
 		}
 		return nil
@@ -275,16 +274,63 @@ func (isp *Inspector) validateGrants() error {
 		isp.migrationContext.Log.Infof("User has ALL privileges")
 		return nil
 	}
-	if foundSuper && foundReplicationSlave && foundDBAll {
-		isp.migrationContext.Log.Infof("User has SUPER, REPLICATION SLAVE privileges, and has ALL privileges on %s.*", sql.EscapeName(isp.migrationContext.DatabaseName))
+	missingDatabases := missingDatabaseGrants(requiredDatabases, foundDBAll)
+	hasRequiredDBGrants := len(missingDatabases) == 0
+	escapedDatabases := formatDatabaseList(requiredDatabases)
+	if foundSuper && foundReplicationSlave && hasRequiredDBGrants {
+		isp.migrationContext.Log.Infof("User has SUPER, REPLICATION SLAVE privileges, and has ALL privileges on %s", escapedDatabases)
 		return nil
 	}
-	if foundReplicationClient && foundReplicationSlave && foundDBAll {
-		isp.migrationContext.Log.Infof("User has REPLICATION CLIENT, REPLICATION SLAVE privileges, and has ALL privileges on %s.*", sql.EscapeName(isp.migrationContext.DatabaseName))
+	if foundReplicationClient && foundReplicationSlave && hasRequiredDBGrants {
+		isp.migrationContext.Log.Infof("User has REPLICATION CLIENT, REPLICATION SLAVE privileges, and has ALL privileges on %s", escapedDatabases)
 		return nil
 	}
-	isp.migrationContext.Log.Debugf("Privileges: Super: %t, REPLICATION CLIENT: %t, REPLICATION SLAVE: %t, ALL on *.*: %t, ALL on %s.*: %t", foundSuper, foundReplicationClient, foundReplicationSlave, foundAll, sql.EscapeName(isp.migrationContext.DatabaseName), foundDBAll)
-	return isp.migrationContext.Log.Errorf("user has insufficient privileges for migration. Needed: SUPER|REPLICATION CLIENT, REPLICATION SLAVE and ALL on %s.*", sql.EscapeName(isp.migrationContext.DatabaseName))
+	isp.migrationContext.Log.Debugf("Privileges: Super: %t, REPLICATION CLIENT: %t, REPLICATION SLAVE: %t, ALL on *.*: %t, ALL on %s: %t", foundSuper, foundReplicationClient, foundReplicationSlave, foundAll, escapedDatabases, hasRequiredDBGrants)
+	if len(missingDatabases) > 0 {
+		return isp.migrationContext.Log.Errorf("user has insufficient privileges for migration. Needed: SUPER|REPLICATION CLIENT, REPLICATION SLAVE and ALL on %s. Missing grants on %s", escapedDatabases, formatDatabaseList(missingDatabases))
+	}
+	return isp.migrationContext.Log.Errorf("user has insufficient privileges for migration. Needed: SUPER|REPLICATION CLIENT, REPLICATION SLAVE and ALL on %s", escapedDatabases)
+}
+
+// requiredMigrationDatabases lists the databases the migration writes to: the original
+// table's, plus the ghost database when the temporary tables live in a schema of their own.
+func (isp *Inspector) requiredMigrationDatabases() []string {
+	databases := []string{isp.migrationContext.DatabaseName}
+	if ghostDatabaseName := isp.migrationContext.GetGhostDatabaseName(); ghostDatabaseName != isp.migrationContext.DatabaseName {
+		databases = append(databases, ghostDatabaseName)
+	}
+	return databases
+}
+
+func grantAppliesToDatabase(grant, databaseName string) bool {
+	escapedDatabaseName := strings.ReplaceAll(databaseName, "_", "\\_")
+	for _, name := range []string{databaseName, escapedDatabaseName} {
+		if strings.Contains(grant, fmt.Sprintf("GRANT ALL PRIVILEGES ON `%s`.*", name)) {
+			return true
+		}
+		if base.StringContainsAll(grant, `ALTER`, `CREATE`, `DELETE`, `DROP`, `INDEX`, `INSERT`, `LOCK TABLES`, `SELECT`, `TRIGGER`, `UPDATE`, fmt.Sprintf(" ON `%s`.*", name)) {
+			return true
+		}
+	}
+	return false
+}
+
+func missingDatabaseGrants(requiredDatabases []string, foundDBAll map[string]bool) []string {
+	var missingDatabases []string
+	for _, databaseName := range requiredDatabases {
+		if !foundDBAll[databaseName] {
+			missingDatabases = append(missingDatabases, databaseName)
+		}
+	}
+	return missingDatabases
+}
+
+func formatDatabaseList(databaseNames []string) string {
+	escapedDatabases := make([]string, 0, len(databaseNames))
+	for _, databaseName := range databaseNames {
+		escapedDatabases = append(escapedDatabases, fmt.Sprintf("%s.*", sql.EscapeName(databaseName)))
+	}
+	return strings.Join(escapedDatabases, ", ")
 }
 
 // restartReplication is required so that we are _certain_ the binlog format and
@@ -581,6 +627,14 @@ func (isp *Inspector) validateTableTriggers() error {
 	if numTriggers > 0 {
 		if isp.migrationContext.IncludeTriggers {
 			isp.migrationContext.Log.Infof("Found %d triggers on %s.%s.", numTriggers, sql.EscapeName(isp.migrationContext.DatabaseName), sql.EscapeName(isp.migrationContext.OriginalTableName))
+			if isp.migrationContext.GetGhostDatabaseName() != isp.migrationContext.DatabaseName {
+				return isp.migrationContext.Log.Errorf("found triggers on %s.%s, but --include-triggers is not supported when the ghost database %s differs from the original database %s. Bailing out",
+					sql.EscapeName(isp.migrationContext.DatabaseName),
+					sql.EscapeName(isp.migrationContext.OriginalTableName),
+					sql.EscapeName(isp.migrationContext.GetGhostDatabaseName()),
+					sql.EscapeName(isp.migrationContext.DatabaseName),
+				)
+			}
 			isp.migrationContext.Triggers, err = mysql.GetTriggers(isp.db, isp.migrationContext.DatabaseName, isp.migrationContext.OriginalTableName)
 			if err != nil {
 				return err
@@ -614,7 +668,7 @@ func (isp *Inspector) validateGhostTriggersDontExist() error {
 				return nil
 			},
 				triggerName,
-				isp.migrationContext.DatabaseName,
+				isp.migrationContext.GetGhostDatabaseName(),
 			)
 			if err != nil {
 				return err
@@ -791,7 +845,7 @@ func (isp *Inspector) getAutoIncrementValue(tableName string) (autoIncrement uin
 
 // getCandidateUniqueKeys investigates a table and returns the list of unique keys
 // candidate for chunking
-func (isp *Inspector) getCandidateUniqueKeys(tableName string) (uniqueKeys [](*sql.UniqueKey), err error) {
+func (isp *Inspector) getCandidateUniqueKeys(databaseName, tableName string) (uniqueKeys [](*sql.UniqueKey), err error) {
 	query := `
 		SELECT /* gh-ost */
 			COLUMNS.TABLE_SCHEMA,
@@ -863,7 +917,7 @@ func (isp *Inspector) getCandidateUniqueKeys(tableName string) (uniqueKeys [](*s
 		}
 		uniqueKeys = append(uniqueKeys, uniqueKey)
 		return nil
-	}, isp.migrationContext.DatabaseName, tableName, isp.migrationContext.DatabaseName, tableName)
+	}, databaseName, tableName, databaseName, tableName)
 	if err != nil {
 		return uniqueKeys, err
 	}
@@ -937,9 +991,9 @@ func (isp *Inspector) getSharedColumns(originalColumns, ghostColumns *sql.Column
 }
 
 // showCreateTable returns the `show create table` statement for given table
-func (isp *Inspector) showCreateTable(tableName string) (createTableStatement string, err error) {
+func (isp *Inspector) showCreateTable(databaseName, tableName string) (createTableStatement string, err error) {
 	var dummy string
-	query := fmt.Sprintf(`show /* gh-ost */ create table %s.%s`, sql.EscapeName(isp.migrationContext.DatabaseName), sql.EscapeName(tableName))
+	query := fmt.Sprintf(`show /* gh-ost */ create table %s.%s`, sql.EscapeName(databaseName), sql.EscapeName(tableName))
 	err = isp.db.QueryRow(query).Scan(&dummy, &createTableStatement)
 	return createTableStatement, err
 }
@@ -952,7 +1006,7 @@ func (isp *Inspector) readChangelogState(hint string) (string, error) {
 			%s.%s
 		where
 			hint = ? and id <= 255`,
-		sql.EscapeName(isp.migrationContext.DatabaseName),
+		sql.EscapeName(isp.migrationContext.GetGhostDatabaseName()),
 		sql.EscapeName(isp.migrationContext.GetChangelogTableName()),
 	)
 	result := ""

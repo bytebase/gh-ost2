@@ -17,6 +17,7 @@ var (
 	testMysqlUser           = "root"
 	testMysqlPass           = "root-password"
 	testMysqlDatabase       = "test"
+	testMysqlGhostDatabase  = "bbdataarchive"
 	testMysqlTableName      = "testing"
 )
 
@@ -25,15 +26,21 @@ func getTestTableName() string {
 }
 
 func getTestGhostTableName() string {
-	return fmt.Sprintf("`%s`.`_%s_gho`", testMysqlDatabase, testMysqlTableName)
+	return fmt.Sprintf("`%s`.`~%s_gho`", testMysqlDatabase, testMysqlTableName)
+}
+
+// getTestGhostDatabaseTableName is the ghost table when it lives in a schema of its
+// own, which is what GhostDatabaseName configures.
+func getTestGhostDatabaseTableName() string {
+	return fmt.Sprintf("`%s`.`~%s_gho`", testMysqlGhostDatabase, testMysqlTableName)
 }
 
 func getTestRevertedTableName() string {
-	return fmt.Sprintf("`%s`.`_%s_rev_del`", testMysqlDatabase, testMysqlTableName)
+	return fmt.Sprintf("`%s`.`~%s_rev_del`", testMysqlDatabase, testMysqlTableName)
 }
 
 func getTestOldTableName() string {
-	return fmt.Sprintf("`%s`.`_%s_del`", testMysqlDatabase, testMysqlTableName)
+	return fmt.Sprintf("`%s`.`~%s_del`", testMysqlDatabase, testMysqlTableName)
 }
 
 func getTestConnectionConfig(ctx context.Context, container testcontainers.Container) (*mysql.ConnectionConfig, error) {

@@ -80,6 +80,7 @@ func NewThrottleCheckResult(throttle bool, reason string, reasonHint ThrottleRea
 type MigrationContext struct {
 	Uuid string
 
+	GhostDatabaseName     string
 	DatabaseName          string
 	OriginalTableName     string
 	AlterStatement        string
@@ -365,12 +366,12 @@ func (mctx *MigrationContext) SetConnectionCharset(charset string) {
 }
 
 func getSafeTableName(baseName string, suffix string) string {
-	name := fmt.Sprintf("_%s_%s", baseName, suffix)
+	name := fmt.Sprintf("~%s_%s", baseName, suffix)
 	if len(name) <= mysql.MaxTableNameLength {
 		return name
 	}
 	extraCharacters := len(name) - mysql.MaxTableNameLength
-	return fmt.Sprintf("_%s_%s", baseName[0:len(baseName)-extraCharacters], suffix)
+	return fmt.Sprintf("~%s_%s", baseName[0:len(baseName)-extraCharacters], suffix)
 }
 
 // GetGhostTableName generates the name of ghost table, based on original table name
@@ -408,6 +409,16 @@ func (mctx *MigrationContext) GetOldTableName() string {
 		return getSafeTableName(tableName, fmt.Sprintf("%s_%s", timestamp, suffix))
 	}
 	return getSafeTableName(tableName, suffix)
+}
+
+// GetGhostDatabaseName returns the database that holds the ghost, old and
+// changelog tables. It is the original table's database unless
+// GhostDatabaseName puts them in a schema of their own.
+func (mctx *MigrationContext) GetGhostDatabaseName() string {
+	if mctx.GhostDatabaseName != "" {
+		return mctx.GhostDatabaseName
+	}
+	return mctx.DatabaseName
 }
 
 // GetChangelogTableName generates the name of changelog table, based on original table name

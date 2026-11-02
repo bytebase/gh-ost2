@@ -193,7 +193,7 @@ func (thlr *Throttler) collectControlReplicasLag() {
 	replicationLagQuery := fmt.Sprintf(`
 		select value from %s.%s where hint = 'heartbeat' and id <= 255
 		`,
-		sql.EscapeName(thlr.migrationContext.DatabaseName),
+		sql.EscapeName(thlr.migrationContext.GetGhostDatabaseName()),
 		sql.EscapeName(thlr.migrationContext.GetChangelogTableName()),
 	)
 
