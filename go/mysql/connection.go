@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 
+	gomysqlclient "github.com/go-mysql-org/go-mysql/client"
 	"github.com/go-sql-driver/mysql"
 )
 
@@ -31,6 +32,14 @@ type ConnectionConfig struct {
 	Timeout              float64
 	TransactionIsolation string
 	Charset              string
+
+	// Network is the go-sql-driver network name. Empty means tcp. A caller that has to
+	// reach the server through a tunnel registers a dial context under its own name
+	// (gomysql.RegisterDialContext) and puts that name here.
+	Network string
+	// Dialer is the same tunnel for go-mysql's binlog connections, which do not go
+	// through go-sql-driver. Nil means go-mysql uses net.Dialer.
+	Dialer gomysqlclient.Dialer
 
 	// TLSKey namespaces the registered driver TLS config. Several migrations can run
 	// in one process against the same host, so the key has to be per migration
@@ -56,6 +65,8 @@ func (con *ConnectionConfig) DuplicateCredentials(key InstanceKey) *ConnectionCo
 		Timeout:              con.Timeout,
 		TransactionIsolation: con.TransactionIsolation,
 		Charset:              con.Charset,
+		Network:              con.Network,
+		Dialer:               con.Dialer,
 		TLSKey:               con.TLSKey,
 	}
 
@@ -170,7 +181,11 @@ func (con *ConnectionConfig) GetDBUri(databaseName string) string {
 		fmt.Sprintf("writeTimeout=%fs", con.Timeout),
 	}
 
-	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?%s", con.User, con.Password, hostname, con.Key.Port, databaseName, strings.Join(connectionParams, "&"))
+	network := con.Network
+	if network == "" {
+		network = "tcp"
+	}
+	return fmt.Sprintf("%s:%s@%s(%s:%d)/%s?%s", con.User, con.Password, network, hostname, con.Key.Port, databaseName, strings.Join(connectionParams, "&"))
 }
 
 func GetDBTLSConfigKey(tlsKey, tlsServerName string) string {
