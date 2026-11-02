@@ -31,6 +31,11 @@ type ConnectionConfig struct {
 	Timeout              float64
 	TransactionIsolation string
 	Charset              string
+
+	// TLSKey namespaces the registered driver TLS config. Several migrations can run
+	// in one process against the same host, so the key has to be per migration
+	// (gh-ost's own uuid) rather than per server name.
+	TLSKey string
 }
 
 func NewConnectionConfig() *ConnectionConfig {
@@ -51,6 +56,7 @@ func (con *ConnectionConfig) DuplicateCredentials(key InstanceKey) *ConnectionCo
 		Timeout:              con.Timeout,
 		TransactionIsolation: con.TransactionIsolation,
 		Charset:              con.Charset,
+		TLSKey:               con.TLSKey,
 	}
 
 	if con.tlsConfig != nil {
@@ -78,7 +84,7 @@ func (con *ConnectionConfig) Equals(other *ConnectionConfig) bool {
 	return con.Key.Equals(&other.Key) || con.ImpliedKey.Equals(other.ImpliedKey)
 }
 
-func (con *ConnectionConfig) UseTLS(caCertificatePath, clientCertificate, clientKey string, allowInsecure bool) error {
+func (con *ConnectionConfig) UseTLS(tlsKey, caCertificatePath, clientCertificate, clientKey string, allowInsecure bool) error {
 	var rootCertPool *x509.CertPool
 	var certs []tls.Certificate
 	var err error
@@ -112,6 +118,7 @@ func (con *ConnectionConfig) UseTLS(caCertificatePath, clientCertificate, client
 		RootCAs:            rootCertPool,
 		InsecureSkipVerify: allowInsecure,
 	}
+	con.TLSKey = tlsKey
 
 	return con.RegisterTLSConfig()
 }
@@ -124,7 +131,7 @@ func (con *ConnectionConfig) RegisterTLSConfig() error {
 		return errors.New("tlsConfig.ServerName cannot be empty")
 	}
 
-	var tlsOption = GetDBTLSConfigKey(con.tlsConfig.ServerName)
+	tlsOption := GetDBTLSConfigKey(con.TLSKey, con.tlsConfig.ServerName)
 
 	return mysql.RegisterTLSConfig(tlsOption, con.tlsConfig)
 }
@@ -145,7 +152,7 @@ func (con *ConnectionConfig) GetDBUri(databaseName string) string {
 	// simplify construction of the DSN below.
 	tlsOption := "false"
 	if con.tlsConfig != nil {
-		tlsOption = GetDBTLSConfigKey(con.tlsConfig.ServerName)
+		tlsOption = GetDBTLSConfigKey(con.TLSKey, con.tlsConfig.ServerName)
 	}
 
 	if con.Charset == "" {
@@ -166,6 +173,9 @@ func (con *ConnectionConfig) GetDBUri(databaseName string) string {
 	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?%s", con.User, con.Password, hostname, con.Key.Port, databaseName, strings.Join(connectionParams, "&"))
 }
 
-func GetDBTLSConfigKey(tlsServerName string) string {
-	return fmt.Sprintf("%s-%s", TLS_CONFIG_KEY, tlsServerName)
+func GetDBTLSConfigKey(tlsKey, tlsServerName string) string {
+	if tlsKey == "" {
+		tlsKey = TLS_CONFIG_KEY
+	}
+	return fmt.Sprintf("%s-%s", tlsKey, tlsServerName)
 }

@@ -943,7 +943,7 @@ func (mctx *MigrationContext) ApplyCredentials() {
 
 func (mctx *MigrationContext) SetupTLS() error {
 	if mctx.UseTLS {
-		return mctx.InspectorConnectionConfig.UseTLS(mctx.TLSCACertificate, mctx.TLSCertificate, mctx.TLSKey, mctx.TLSAllowInsecure)
+		return mctx.InspectorConnectionConfig.UseTLS(mctx.Uuid, mctx.TLSCACertificate, mctx.TLSCertificate, mctx.TLSKey, mctx.TLSAllowInsecure)
 	}
 	return nil
 }

@@ -44,6 +44,7 @@ func TestDuplicateCredentials(t *testing.T) {
 	}
 	c.TransactionIsolation = transactionIsolation
 	c.Charset = "utf8mb4"
+	c.TLSKey = "uuidv4"
 
 	dup := c.DuplicateCredentials(InstanceKey{Hostname: "otherhost", Port: 3310})
 	require.Equal(t, "otherhost", dup.Key.Hostname)
@@ -58,6 +59,7 @@ func TestDuplicateCredentials(t *testing.T) {
 	require.Equal(t, c.tlsConfig.InsecureSkipVerify, dup.tlsConfig.InsecureSkipVerify)
 	require.Equal(t, c.TransactionIsolation, dup.TransactionIsolation)
 	require.Equal(t, c.Charset, dup.Charset)
+	require.Equal(t, c.TLSKey, dup.TLSKey)
 }
 
 func TestDuplicate(t *testing.T) {
@@ -104,12 +106,16 @@ func TestGetDBUriWithTLSSetup(t *testing.T) {
 	}
 	c.TransactionIsolation = transactionIsolation
 	c.Charset = "utf8mb4_general_ci,utf8_general_ci,latin1"
+	c.TLSKey = "uuidv4"
 
 	uri := c.GetDBUri("test")
-	require.Equal(t, `gromit:penguin@tcp(myhost:3306)/test?autocommit=true&interpolateParams=true&charset=utf8mb4_general_ci,utf8_general_ci,latin1&tls=ghost-myhost&transaction_isolation="REPEATABLE-READ"&timeout=1.234500s&readTimeout=1.234500s&writeTimeout=1.234500s`, uri)
+	require.Equal(t, `gromit:penguin@tcp(myhost:3306)/test?autocommit=true&interpolateParams=true&charset=utf8mb4_general_ci,utf8_general_ci,latin1&tls=uuidv4-myhost&transaction_isolation="REPEATABLE-READ"&timeout=1.234500s&readTimeout=1.234500s&writeTimeout=1.234500s`, uri)
 }
 
 func TestGetDBTLSConfigKey(t *testing.T) {
-	configKey := GetDBTLSConfigKey("myhost")
+	configKey := GetDBTLSConfigKey("", "myhost")
 	require.Equal(t, "ghost-myhost", configKey)
+
+	configKey = GetDBTLSConfigKey("uuidv4", "myhost")
+	require.Equal(t, "uuidv4-myhost", configKey)
 }
