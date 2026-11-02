@@ -7,6 +7,7 @@ package logic
 
 import (
 	gosql "database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -241,6 +242,11 @@ func (es *EventsStreamer) StreamEvents(canStopStreaming func() bool) error {
 		if err := es.binlogReader.StreamEvents(canStopStreaming, es.eventsChannel); err != nil {
 			if canStopStreaming() {
 				return nil
+			}
+			// Reconnecting after the circuit breaker tripped is the retry storm it exists
+			// to stop, so this error ends the migration.
+			if errors.Is(err, binlog.ErrMaxAuthFailures) {
+				return err
 			}
 
 			es.migrationContext.Log.Infof("StreamEvents encountered unexpected error: %+v", err)

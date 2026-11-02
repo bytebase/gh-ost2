@@ -110,6 +110,16 @@ type MigrationContext struct {
 	Revert                   bool
 	OldTableName             string
 
+	// MaxAuthFailures aborts the migration once this many consecutive authentication
+	// failures have been seen. Reconnecting forever against a server that rejects the
+	// credentials looks like a brute-force attempt and gets the host firewalled.
+	// Zero disables the circuit breaker.
+	MaxAuthFailures int
+	// AuthFailureCount is the consecutive authentication failure count. It lives on the
+	// context rather than the binlog reader because the streamer discards and recreates
+	// the reader on every reconnect.
+	AuthFailureCount int
+
 	// SkipPortValidation allows skipping the port validation in `ValidateConnection`
 	// This is useful when connecting to a MySQL instance where the external port
 	// may not match the internal port.

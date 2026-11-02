@@ -6,7 +6,9 @@
 package binlog
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/github/gh-ost/go/base"
@@ -19,6 +21,19 @@ import (
 
 	gomysql "github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/replication"
+)
+
+// ErrMaxAuthFailures marks the authentication failure that crossed MaxAuthFailures.
+// The streamer checks for it to stop reconnecting instead of retrying forever.
+var ErrMaxAuthFailures = errors.New("max authentication failures reached")
+
+// MySQL error codes that mean the credentials or the host were rejected.
+const (
+	errDBAccessDenied     = 1044 // access denied for user to database
+	errAccessDenied       = 1045 // access denied for user (using password: YES/NO)
+	errHostNotAllowed     = 1130 // host is not allowed to connect
+	errAccessDeniedNoPass = 1698 // access denied (no password provided)
+	errAccountLocked      = 3118 // account has been locked
 )
 
 type RowsEventFilterFunc func(databaseName, tableName string) bool
@@ -78,6 +93,62 @@ func NewGoMySQLReader(migrationContext *base.MigrationContext, rowsEventFilters 
 	}
 }
 
+// isAuthenticationError reports whether err means the server rejected the
+// credentials or the host, rather than failing for some transient reason.
+func (gmr *GoMySQLReader) isAuthenticationError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var myErr *gomysql.MyError
+	if errors.As(err, &myErr) {
+		switch myErr.Code {
+		case errAccessDenied, errDBAccessDenied, errHostNotAllowed, errAccessDeniedNoPass, errAccountLocked:
+			return true
+		}
+	}
+
+	// Errors relayed through a proxy arrive untyped, so fall back to the message.
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "access denied") ||
+		strings.Contains(errStr, "authentication failed")
+}
+
+// resetAuthFailureCount clears the consecutive-failure count after the connection
+// or the event read succeeded.
+func (gmr *GoMySQLReader) resetAuthFailureCount(context string) {
+	if gmr.migrationContext.AuthFailureCount > 0 {
+		gmr.migrationContext.Log.Infof("%s successful, resetting auth failure count from %d to 0", context, gmr.migrationContext.AuthFailureCount)
+		gmr.migrationContext.AuthFailureCount = 0
+	}
+}
+
+// handleAuthError passes err through, counting consecutive authentication failures and
+// wrapping the one that crosses MaxAuthFailures in ErrMaxAuthFailures. A nil err resets
+// the count.
+func (gmr *GoMySQLReader) handleAuthError(err error, context string) error {
+	if err == nil {
+		gmr.resetAuthFailureCount(context)
+		return nil
+	}
+
+	if !gmr.isAuthenticationError(err) {
+		return err
+	}
+
+	gmr.migrationContext.AuthFailureCount++
+
+	if gmr.migrationContext.MaxAuthFailures > 0 && gmr.migrationContext.AuthFailureCount >= gmr.migrationContext.MaxAuthFailures {
+		return fmt.Errorf("%w: authentication failed %d times (max: %d) during %s, aborting to prevent firewall blocking: %w",
+			ErrMaxAuthFailures, gmr.migrationContext.AuthFailureCount, gmr.migrationContext.MaxAuthFailures, context, err)
+	}
+
+	gmr.migrationContext.Log.Errorf("Authentication failure #%d during %s (max: %d): %v",
+		gmr.migrationContext.AuthFailureCount, context, gmr.migrationContext.MaxAuthFailures, err)
+
+	return err
+}
+
 // ConnectBinlogStreamer
 func (gmr *GoMySQLReader) ConnectBinlogStreamer(coordinates mysql.BinlogCoordinates) (err error) {
 	if coordinates.IsEmpty() {
@@ -100,7 +171,7 @@ func (gmr *GoMySQLReader) ConnectBinlogStreamer(coordinates mysql.BinlogCoordina
 			Pos:  uint32(coords.LogPos)},
 		)
 	}
-	return err
+	return gmr.handleAuthError(err, "connection")
 }
 
 func (gmr *GoMySQLReader) GetCurrentBinlogCoordinates() mysql.BinlogCoordinates {
@@ -157,8 +228,9 @@ func (gmr *GoMySQLReader) StreamEvents(canStopStreaming func() bool, entriesChan
 	for !canStopStreaming() {
 		ev, err := gmr.binlogStreamer.GetEvent(context.Background())
 		if err != nil {
-			return err
+			return gmr.handleAuthError(err, "streaming")
 		}
+		gmr.resetAuthFailureCount("event retrieval")
 
 		// Update binlog coords if using file-based coords.
 		// GTID coordinates are updated on receiving GTID events.
